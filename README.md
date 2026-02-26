@@ -32,4 +32,16 @@ python utils/video-splitter.py
 **How it works:**
 - **Input**: Reads `.mp4` files from the directory defined in `videos_folder` (default: `data/videos/raw`).
 - **Processing**: Splits each video into segments based on `clip_duration_minutes` in `config.yaml`.
-- **Output**: Creates a subfolder for each original video in `clips_folder` (default: `data/videos/clips`) containing the numbered clips (e.g., `01.mp4`, `02.mp4`).
+- **Output**: Creates a subfolder for each original video in `clips_folder` (default: `data/videos/clips`) containing the numbered clips (e.g., `01.mp4`).
+
+### Step 2: Extract Frames from Clips
+Use the `utils/clip-splitter.py` script to extract individual frames from the previously generated clips.
+
+```bash
+python utils/clip-splitter.py
+```
+
+**How it works:**
+- **Input**: Processes all `.mp4` clips found in `clips_folder` (default: `data/videos/clips`).
+- **Processing**: Extracts frames at a rate specified by `frames_per_second` in `config.yaml`.
+- **Output**: Generates images in `frames_folder` (default: `data/images/frames`), maintaining a folder structure that matches the video and clip names (e.g., `data/images/frames/Video_01/01/00000.png`).

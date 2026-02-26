@@ -2,3 +2,7 @@
 clip_duration_minutes: 3
 videos_folder: "data/videos/raw"
 clips_folder: "data/videos/clips"
+
+# Clip splitting settings (to frames)
+frames_per_second: 1
+frames_folder: "data/images/frames"
