@@ -1,0 +1,4 @@
+# Video Splitting Settings
+clip_duration_minutes: 3
+videos_folder: "data/videos/raw"
+clips_folder: "data/videos/clips"
