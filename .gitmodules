@@ -1,0 +1,6 @@
+[submodule "sam3"]
+	path = sam3
+	url = https://github.com/facebookresearch/sam3.git
+[submodule "mmpose"]
+	path = mmpose
+	url = https://github.com/open-mmlab/mmpose.git
