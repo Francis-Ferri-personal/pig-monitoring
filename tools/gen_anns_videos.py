@@ -56,7 +56,7 @@ def generate_annotations(prompt_text="pig"):
             continue
 
         masked_root = os.path.join(masked_base_root, video_dir_name)
-        output_base_dir = os.path.join("data/annotations", video_dir_name)
+        output_base_dir = os.path.join("data/annotations/sam", video_dir_name)
         os.makedirs(output_base_dir, exist_ok=True)
 
         # Get and sort clips (01, 02, etc.)

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from pycocotools import mask as mask_utils
 
-def visualize_coco_frame(video_id, clip_id, frame_id, annotations_dir="data/annotations", frames_root="data/images/frames", figsize=(12, 8), output_path=None):
+def visualize_coco_frame(video_id, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None):
     """
     Visualizes a specific frame from a clip using its COCO annotations.
     
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=int, default=1, help="Video ID (default: 1)")
     parser.add_argument("--clip", type=str, required=True, help="Clip ID (e.g., '1' or '01')")
     parser.add_argument("--frame", type=int, required=True, help="Frame index")
-    parser.add_argument("--ann_dir", type=str, default="data/annotations", help="Path to annotations folder")
+    parser.add_argument("--ann_dir", type=str, default="data/annotations/sam", help="Path to annotations folder")
     parser.add_argument("--frame_root", type=str, default="data/images/frames", help="Path to frames root folder")
     parser.add_argument("--output", type=str, default=None, help="Optional path to save the output image")
     
