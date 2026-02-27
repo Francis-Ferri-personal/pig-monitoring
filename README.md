@@ -70,3 +70,32 @@ python utils/apply_mask.py --mask data/images/mask.png --input data/images/frame
 - **Input**: Processes all images found in the `--input` directory (default: `data/images/frames`).
 - **Processing**: Applies the bitwise AND operation between the frame and the `--mask` PNG file. Areas that are black in the mask will become black in the output frames.
 - **Output**: Generates masked images in the `--output` directory (default: `data/images/frames_masked`), maintaining the original subfolder structure.
+
+### Step 4: Batch Annotation Generation
+Use the `tools/gen_anns_videos.py` script to automatically generate COCO annotations for all processed clips using SAM 3.
+
+```bash
+python tools/gen_anns_videos.py --prompt "pig"
+```
+
+**How it works:**
+- **Input**: Processes all masked frames in `data/images/frames_masked`.
+- **Processing**: Uses SAM 3 to detect and track entities using the provided `--prompt` (default is "pig").
+- **Automatic Resume**: If the script is interrupted, it will automatically skip clips that already have a `.json` file, maintaining ID consistency across the entire video.
+- **Output**: Generates COCO-compliant JSON files in `data/annotations/{video_name}/{clip_id}.json`.
+
+---
+
+## Utilities
+
+### Visualization Tool
+You can verify the quality of the generated annotations by visualizing specific frames:
+
+```bash
+python utils/viz_utils.py --video 1 --clip 01 --frame 100 --output vis_result.png
+```
+
+- `--video`: The numeric ID of the video.
+- `--clip`: The clip ID (e.g., `01`).
+- `--frame`: The specific frame index within that clip.
+- `--output`: Path to save the resulting image with masks and bounding boxes overlaid.
