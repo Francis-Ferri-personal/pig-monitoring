@@ -16,7 +16,15 @@ Project for monitoring and tracking pig behavior from video feeds.
    pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
    ```
 
-3. **Install Other Dependencies**:
+3. **Load Git Submodules**:
+   This project uses Git submodules for **SAM 3** and **MMPose**. 
+   - **New Clones**: Use `git clone --recursive [URL]`
+   - **Existing Clones**: If you already cloned the repo without submodules, run:
+     ```bash
+     git submodule update --init --recursive
+     ```
+
+4. **Install Other Dependencies**:
    This will install all project requirements, including the local **SAM 3** package with its notebook dependencies:
    ```bash
    pip install -r requirements.txt
@@ -28,8 +36,35 @@ Project for monitoring and tracking pig behavior from video feeds.
    >
    > **Note**: The token needs the permission: _"Read access to contents of all public gated repos you can access"_
 
-4. **Configuration**:
+5. **Configuration**:
    Modify `config.yaml` to specify your input/output folders and desired clip duration.
+
+---
+
+## Secondary Setup: MMPose (Pose Estimation)
+
+If you need to perform pose estimation, set up the dedicated environment for **MMPose**:
+
+```bash
+# 1. Create dedicated conda environment
+conda create --prefix ./.venv-pose python=3.8 -y
+conda activate ./.venv-pose
+
+# 2. Install PyTorch for MMPose (CUDA 12.4)
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# 3. Install OpenMMLab tools
+pip install -U openmim
+mim install mmengine
+mim install "mmcv==2.1.0" # Note: wheel building takes time
+mim install "mmdet>=3.1.0"
+
+# 4. Install MMPose from source
+cd mmpose
+pip install -r requirements.txt
+pip install -v -e .
+cd ..
+```
 
 ---
 
