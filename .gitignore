@@ -3,3 +3,7 @@ data/images/frames
 data/images/frames_masked
 data/annotations
 **/__pycache__
+.venv
+sam3
+.venv-pose
+mmpose
