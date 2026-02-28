@@ -106,31 +106,55 @@ python utils/apply_mask.py --mask data/images/mask.png --input data/images/frame
 - **Processing**: Applies the bitwise AND operation between the frame and the `--mask` PNG file. Areas that are black in the mask will become black in the output frames.
 - **Output**: Generates masked images in the `--output` directory (default: `data/images/frames_masked`), maintaining the original subfolder structure.
 
-### Step 4: Batch Annotation Generation
-Use the `tools/gen_anns_videos.py` script to automatically generate COCO annotations for all processed clips using SAM 3.
+### Step 4: Batch Annotation Generation (BBoxes & Tracking)
+Use the `tools/gen_anns_videos.py` script to automatically detect and track pigs using SAM 3. This will generate the initial bounding boxes and segmentation masks.
 
 ```bash
 python tools/gen_anns_videos.py --prompt "pig"
 ```
 
 **How it works:**
-- **Input**: Processes all masked frames in `data/images/frames_masked`.
-- **Processing**: Uses SAM 3 to detect and track entities using the provided `--prompt` (default is "pig").
-- **Automatic Resume**: If the script is interrupted, it will automatically skip clips that already have a `.json` file, maintaining ID consistency across the entire video.
-- **Output**: Generates COCO-compliant JSON files in `data/annotations/{video_name}/{clip_id}.json`.
+- **Input**: Processes all images in `data/images/frames_masked/`.
+- **Processing**: Uses SAM 3 to detect pigs based on the `--prompt` and tracks them across frames in each clip.
+- **Output**: Generates COCO-compliant JSON files in `data/annotations/sam/{video_dir}/{clip_id}.json`.
+- **Automatic Resume**: Skips clips that already have an annotation file.
+
+### Step 5: Pose Estimation (Keypoints)
+Once you have the SAM annotations, you can generate pose estimations (keypoints) for each detected pig using MMPose.
+
+```bash
+# Ensure you are using the pose environment
+conda activate ./.venv-pose
+# Note: Use tools/test.py if it exists, otherwise its logic is integrated into the workflow
+python tools/test.py --device cuda:1 --batch-size 32
+```
+
+**How it works:**
+- **Input**: Reads existing SAM annotations from `data/annotations/sam/`.
+- **Processing**: For each pig, it masks the background and runs **MMPose** inference. 
+- **Output**: Generates new COCO-compliant JSON files in `data/annotations/pose/` including `keypoints` and `skeleton` metadata.
 
 ---
 
 ## Utilities
 
 ### Visualization Tool
-You can verify the quality of the generated annotations by visualizing specific frames:
+You can verify the quality of the annotations (both SAM masks and Pose keypoints) by visualizing specific frames:
 
+#### 1. Visualize SAM Masks (Segmentation)
 ```bash
-python utils/viz_utils.py --video 1 --clip 01 --frame 100 --output vis_result.png
+python utils/viz_utils.py --video 1 --clip 01 --frame 100 --output segment_vis.png
 ```
 
-- `--video`: The numeric ID of the video.
-- `--clip`: The clip ID (e.g., `01`).
-- `--frame`: The specific frame index within that clip.
-- `--output`: Path to save the resulting image with masks and bounding boxes overlaid.
+#### 2. Visualize Pose Keypoints (Skeleton)
+```bash
+python utils/viz_utils.py --video 1 --clip 01 --frame 100 --pose --output pose_vis.png
+```
+
+**Arguments:**
+- `--video`: The numeric ID of the video directory (e.g., `1` for `video1`).
+- `--clip`: The clip file name (e.g., `01`).
+- `--frame`: The specific frame index within that clip (e.g., `100`).
+- `--pose`: (Optional) If enabled, loads from `data/annotations/pose` and draws skeletons.
+- `--output`: (Optional) Path to save the resulting image.
+- `--ann_dir`: (Optional) Custom path to annotations folder.

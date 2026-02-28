@@ -3,7 +3,7 @@ import json
 import numpy as np
 from pycocotools import mask as mask_utils
 
-def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_name="pig", global_img_id_offset=0, global_ann_id_offset=0):
+def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_name="pig", super_category="animal", global_img_id_offset=0, global_ann_id_offset=0):
     """
     Converts SAM 3 video predictor outputs to COCO format.
     
@@ -38,7 +38,8 @@ def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_n
         "categories": [
             {
                 "id": 1,
-                "name": category_name
+                "name": category_name,
+                "supercategory": super_category,
             }
         ]
     }
