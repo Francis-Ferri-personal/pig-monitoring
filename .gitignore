@@ -7,3 +7,4 @@ data/annotations
 sam3
 .venv-pose
 mmpose
+out

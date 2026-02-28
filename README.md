@@ -158,3 +158,16 @@ python utils/viz_utils.py --video 1 --clip 01 --frame 100 --pose --output pose_v
 - `--pose`: (Optional) If enabled, loads from `data/annotations/pose` and draws skeletons.
 - `--output`: (Optional) Path to save the resulting image.
 - `--ann_dir`: (Optional) Custom path to annotations folder.
+#### 3. Generate a Video from Annotations
+To create a "slideshow" video where each annotated frame is shown for a second (matching the clip duration if captured at 1 FPS):
+
+```bash
+python utils/video_generator.py --video 1 --clip 01 --pose --fps 1
+```
+
+**Arguments:**
+- `--video`: Video ID.
+- `--clip`: Clip ID.
+- `--pose`: (Optional) Use Pose annotations.
+- `--fps`: (Optional) Output video frames per second. Default is 1 (each frame stays for 1s).
+- `--output`: (Optional) Path to save the `.mp4` video.

@@ -6,3 +6,9 @@ clips_folder: "data/videos/clips"
 # Clip splitting settings (to frames)
 frames_per_second: 1
 frames_folder: "data/images/frames"
+
+# Processing settings
+bbox_padding_factor: 1.10
+
+# Visualization settings
+video_out_folder: "out/videos"
