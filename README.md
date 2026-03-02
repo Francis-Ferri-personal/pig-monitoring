@@ -158,16 +158,31 @@ python utils/viz_utils.py --video 1 --clip 01 --frame 100 --pose --output pose_v
 - `--pose`: (Optional) If enabled, loads from `data/annotations/pose` and draws skeletons.
 - `--output`: (Optional) Path to save the resulting image.
 - `--ann_dir`: (Optional) Custom path to annotations folder.
-#### 3. Generate a Video from Annotations
-To create a "slideshow" video where each annotated frame is shown for a second (matching the clip duration if captured at 1 FPS):
+#### 3. Generate Videos (Raw, Pose, or SAM)
+Create video files from the extracted frames. You can generate clean clips (raw), clips with pose skeletons, or clips with segmentation masks.
 
+**Mode 1: Raw Clips (No annotations)**
 ```bash
-python utils/video_generator.py --video 1 --clip 01 --pose --fps 1
+python utils/video_generator.py --all
 ```
+- **Output**: `out/videos/clip/videoX/{clip_id}.mp4`
+
+**Mode 2: Pose Keypoints (Skeletons)**
+```bash
+python utils/video_generator.py --all --pose
+```
+- **Output**: `out/videos/pose/videoX/{clip_id}.mp4`
+
+**Mode 3: SAM Masks (Segmentation)**
+```bash
+python utils/video_generator.py --all --sam
+```
+- **Output**: `out/videos/sam/videoX/{clip_id}.mp4`
 
 **Arguments:**
-- `--video`: Video ID.
-- `--clip`: Clip ID.
-- `--pose`: (Optional) Use Pose annotations.
-- `--fps`: (Optional) Output video frames per second. Default is 1 (each frame stays for 1s).
-- `--output`: (Optional) Path to save the `.mp4` video.
+- `--all`: Process all available clips. Automatically skips existing output files (resume).
+- `--video` & `--clip`: Target a specific clip instead of all.
+- `--pose`: Use pose annotations.
+- `--sam`: Use SAM annotations.
+- `--fps`: Output frames per second (default: 1).
+- `--output`: Custom output path (only for single clip mode).
