@@ -69,7 +69,7 @@ def process_single_clip(video_id, clip_id, ann_dir, frames_root, config, args, m
                 frame_id=frame_idx,
                 annotations_dir=ann_dir,
                 frames_root=frames_root,
-                show_pose=(mode == "pose")
+                show_pose=(mode == "pose" or mode == "refined")
             )
         
         if vis_frame is None:
@@ -96,6 +96,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="Process all available clips")
     parser.add_argument("--pose", action="store_true", help="Use Pose annotations (skeleton)")
     parser.add_argument("--sam", action="store_true", help="Use SAM annotations (masks)")
+    parser.add_argument("--refined", action="store_true", help="Use Refined annotations (cleaned SAM)")
     parser.add_argument("--output", type=str, default=None, help="Output video path")
     parser.add_argument("--fps", type=int, default=1, help="Output video FPS.")
     
@@ -106,6 +107,10 @@ def main():
         mode = "pose"
         ann_dir = "data/annotations/pose"
         default_out = "out/videos/pose"
+    elif args.refined:
+        mode = "refined"
+        ann_dir = "data/annotations/refined"
+        default_out = "out/videos/refined"
     elif args.sam:
         mode = "sam"
         ann_dir = "data/annotations/sam"

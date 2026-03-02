@@ -134,6 +134,30 @@ python tools/test.py --device cuda:1 --batch-size 32
 - **Processing**: For each pig, it masks the background and runs **MMPose** inference. 
 - **Output**: Generates new COCO-compliant JSON files in `data/annotations/pose/` including `keypoints` and `skeleton` metadata.
 
+### Step 6: Refinement Process
+The refinement process ensures that tracks are consistent across clips and erroneous detections are removed. This process operates on the `data/annotations/refined/` directory.
+
+**1. Initialize Refined Directory**
+Copies the pose annotations (BBoxes + Masks + Keypoints) to the refined folder.
+```bash
+python utils/annotation_manager.py init
+```
+
+**2. Apply Global ID Remapping**
+Use the mapping configuration to ensure IDs are consistent throughout the entire dataset. This will **reset** the target clips from the `pose` original before applying the map.
+```bash
+python utils/annotation_manager.py remap --map data/anns-remap.json
+```
+
+**3. Delete Erroneous Detections (Cleanup)**
+Perform final cleaning *after* remapping. If you find an incorrect track (e.g., in video 1, clip 06, the track with ID 7 is a false positive), remove it:
+```bash
+# Note: Always run this after remapping, as remapping resets the file.
+python utils/annotation_manager.py delete-id --video 1 --clip 06 --id 7
+```
+
+> ⚠️ **Important**: If you change the default configurations (like splitting parameters or padding), you MUST update `data/anns-remap.json` and delete incorrect IDs to match the new results.
+
 ---
 
 ## Utilities
@@ -179,10 +203,58 @@ python utils/video_generator.py --all --sam
 ```
 - **Output**: `out/videos/sam/videoX/{clip_id}.mp4`
 
+**Mode 4: Refined Clips (Cleaned Tracking)**
+```bash
+python utils/video_generator.py --all --refined
+```
+- **Output**: `out/videos/refined/videoX/{clip_id}.mp4`
+
 **Arguments:**
 - `--all`: Process all available clips. Automatically skips existing output files (resume).
 - `--video` & `--clip`: Target a specific clip instead of all.
 - `--pose`: Use pose annotations.
 - `--sam`: Use SAM annotations.
+- `--refined`: Use refined annotations (from `data/annotations/refined`).
 - `--fps`: Output frames per second (default: 1).
 - `--output`: Custom output path (only for single clip mode).
+
+#### 4. ID Mapping Configuration
+To maintain consistency, use the following unique IDs based on ear tags:
+
+| Ear Tag (Color/Mark) | Unique ID |
+| :--- | :--- |
+| Yellow K | **0** |
+| Green 555 | **1** |
+| Red NN | **2** |
+| Teal YY | **3** |
+| Tan 66 | **4** |
+
+**Mapping JSON Structure**
+The remapping tool (`--map`) expects a nested structure:
+- **Video Level**: Groups clips by video folder.
+- **Clip Level**: Defines remapping for individual JSON files.
+- **Remap Level**: Allows range-based ID changes.
+
+Example of `data/anns-remap.json`:
+```json
+[
+  {
+    "video": "video1",
+    "clips": [
+      {
+        "clip": "06",
+        "remaps": [
+          {
+            "frame_start": 103,
+            "frame_end": 179,
+            "remap": { "1": "5", "3": "2" }
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+- `"1": "5"`: Changes the tracker's `track_id: 5` to our master `track_id: 1`.
+- `"3": "2"`: Changes the tracker's `track_id: 2` to our master `track_id: 3`.
+- Mapping keys must be strings; values are converted to integers in COCO.
