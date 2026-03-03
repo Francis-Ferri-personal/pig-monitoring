@@ -8,3 +8,5 @@ sam3
 .venv-pose
 mmpose
 out
+TODO.md
+behavior.csv
