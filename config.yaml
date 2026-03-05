@@ -9,3 +9,45 @@ frames_folder: "data/images/frames"
 
 # Processing settings
 bbox_padding_factor: 1.10
+
+# Behavior Recognition Settings
+behavior_classes:
+  Lying: 0
+  Sitting: 1
+  Standing_Walking: 2
+  Feeding: 3
+  Drinking: 4
+
+# Keypoints to extract (using the names consistent with the pose estimation)
+# These will be used to filter and order features in the feature_extractor
+keypoints_to_use:
+  - "L_Eye"
+  - "R_Eye"
+  - "Nose"
+  - "Neck"
+  - "Root of tail"
+  - "L_Shoulder"
+  - "L_Elbow"
+  - "L_F_Paw"
+  - "R_Shoulder"
+  - "R_Elbow"
+  - "R_F_Paw"
+  - "L_Hip"
+  - "L_Knee"
+  - "L_B_Paw"
+  - "R_Hip"
+  - "R_Knee"
+  - "R_B_Paw"
+
+# Training / Sequence settings
+window_size: 60      # Increased to 2 seconds for better context
+stride_train: 2      # Decreased for more overlapping training samples
+
+# Hyperparameters
+rnn_type: "LSTM"
+epochs: 30           # Increased epochs
+learning_rate: 0.0005 # Slower learning rate to prevent early overfitting
+hidden_size: 128     # Increased capacity
+num_layers: 2
+batch_size: 32
+

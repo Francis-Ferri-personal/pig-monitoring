@@ -158,6 +158,78 @@ python utils/annotation_manager.py delete-id --video 1 --clip 06 --id 7
 
 > ⚠️ **Important**: If you change the default configurations (like splitting parameters or padding), you MUST update `data/anns-remap.json` and delete incorrect IDs to match the new results.
 
+# Behavior Recognition System Overview
+
+This system implements a deep learning pipeline to classify pig behaviors into five categories: **Lying, Sitting, Standing, Walking, and Feeding**.
+
+## 1. Feature Engineering
+Instead of raw pixels, our model uses a compact high-level representation for each pig in every frame:
+- **Geometry Features (6D)**: Normalized BBox area, Aspect Ratio, Normalized Center coordinates ($x, y$), and Normalized Dimensions ($w, h$).
+- **Pose Features (17 keypoints x 3)**: For each keypoint (ears, nose, shoulders, hips, etc.):
+  - Relative coordinates $(x, y)$ normalized to the individual pig's BBox.
+  - Visibility-based confidence score ($v=2 \to 1.0$, $v=1 \to 0.3$, $v=0 \to 0.0$).
+
+**Total Input Size**: $6 + (17 \times 3) = 57$ features per frame.
+
+## 2. Temporal Processing
+- **Sliding Window**: We use a window size of **30 frames** (approx. 1 second at 30 fps) to capture the temporal dynamics of movement and posture.
+- **LSTM (Long Short-Term Memory)**: We use a 2-layer LSTM network with 128 hidden units per layer. This architecture is ideal for sequential data where the transition between states (e.g., Standing to Walking) is crucial.
+
+## 3. Training & Balancing
+The dataset is highly imbalanced (pigs spend most of their time Lying).
+- **Class Weighting**: We automatically calculate class weights based on inverse frequency.
+- **Loss Function**: `CrossEntropyLoss` is applied with these weights to penalize the model more heavily for misclassifying rare behaviors (like Feeding or Sitting).
+- **Split Strategy**: **Video 1 & 2** are used for training (diverse environments), while **Video 3** is reserved for strictly independent validation/testing.
+
+---
+
+### Step 7: Behavior Labeling
+Integrate manual behavior annotations from a CSV file into the refined dataset.
+
+```bash
+python behavior/add_behavior_labels.py
+```
+
+**How it works:**
+- **Input**: Reads `data/behavior.csv` (schema: `timestamp,video,clip,frame,id,behavior`).
+- **Processing**: Copies `data/annotations/refined` to `data/annotations/behavior`. Sets a default action (**Lying**) and applies specific labels from the CSV.
+- **Output**: COCO JSONs in `data/annotations/behavior/` with a new `"action"` field.
+
+### Step 8: Feature Extraction
+Convert the behavioral dataset into compact numerical tensors for model training.
+
+```bash
+python behavior/feature_extractor.py
+```
+
+**How it works:**
+- **Input**: Processes JSONs in `data/annotations/behavior/`.
+- **Processing**: 
+  - Extracts **bbox and normalized pose features** per pig/frame.
+  - Maps visibility to confidence: $v=2 \to 1.0$, $v=1 \to 0.3$.
+  - Organizes data temporally per `track_id`.
+- **Output**: Compressed NumPy files (`.npz`) in `data/features/{video_dir}/track_{id}.npz`.
+
+### Step 9: Model Training, Evaluation & Reports
+Train the behavior recognition model (RNN/LSTM/GRU) and automatically generate performance reports.
+
+```bash
+python behavior/train_behavior.py
+```
+
+**How it works:**
+- **Input**: Uses `.npz` files from `data/features/` and hyperparameters from `config.yaml`.
+- **Training Strategy**: Uses **Video 1 & 2** for training, and **Video 3** for strictly independent validation.
+- **Processing**: 
+  - Trains the RNN model based on the sequence dynamics.
+  - Automatically selects properties (Learning Rate, Architecture, etc.) from `config.yaml`.
+- **Outputs** (Saved in `out/results/{experiment_name}`):
+  - `best_model.pt`: The trained model weights.
+  - `train.log`: Full execution logs of the training process.
+  - `loss_curve.png` & `accuracy_curve.png`: Training progress visualization.
+  - `confusion_matrix.png`: Model performance per class.
+  - `clip_reports/`: Detailed 180-frame behavioral timelines for all pigs in a single frame.
+
 ---
 
 ## Utilities
