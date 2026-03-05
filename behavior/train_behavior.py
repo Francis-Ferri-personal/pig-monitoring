@@ -93,7 +93,7 @@ def train_model(args):
     window_size = config.get('window_size', 30)
     stride = config.get('stride_train', 5)
     
-    train_ds = PigBehaviorDataset(FEAT_DIR, train_vids, window_size=window_size, stride=stride)
+    train_ds = PigBehaviorDataset(FEAT_DIR, train_vids, window_size=window_size, stride=stride, balance_data=False)
     val_ds = PigBehaviorDataset(FEAT_DIR, val_vids, window_size=window_size, stride=stride)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
@@ -109,7 +109,24 @@ def train_model(args):
         num_classes=len(class_names)
     ).to(device)
     
-    criterion = nn.CrossEntropyLoss()
+    # 4.5 Class Weights for Imbalance
+    from collections import Counter
+    import numpy as np
+    
+    label_counts = Counter(train_ds.labels)
+    total_samples = sum(label_counts.values())
+    
+    # Weight = total_samples / (num_classes * count)
+    class_weights = []
+    for i in range(len(class_names)):
+        count = label_counts.get(i, 1) # avoid div by zero
+        weight = total_samples / (len(class_names) * count)
+        class_weights.append(weight)
+        
+    weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
+    print(f">>> Class Weights: {weights_tensor.cpu().numpy().round(3)}")
+    
+    criterion = nn.CrossEntropyLoss(weight=weights_tensor)
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     # 5. Training Loop

@@ -4,19 +4,21 @@ import torch
 from torch.utils.data import Dataset
 
 class PigBehaviorDataset(Dataset):
-    def __init__(self, feature_dir, video_list, window_size=30, stride=5):
+    def __init__(self, feature_dir, video_list, window_size=30, stride=5, balance_data=False):
         """
         Args:
             feature_dir (str): Root directory of extracted .npz features.
             video_list (list): List of video names to include (e.g. ['video1', 'video2']).
             window_size (int): Number of frames per sequence.
             stride (int): How many frames to skip between sequences (overlap).
+            balance_data (bool): If True, randomly undersamples the majority classes.
         """
         self.window_size = window_size
         self.sequences = []
         self.labels = []
 
         print(f">>> Loading dataset for {video_list}...")
+
         
         for video in video_list:
             video_path = os.path.join(feature_dir, video)
@@ -46,6 +48,42 @@ class PigBehaviorDataset(Dataset):
                     self.labels.append(label)
 
         print(f"    Loaded {len(self.sequences)} sequences.")
+
+        if balance_data and len(self.labels) > 0:
+            import random
+            from collections import Counter
+            
+            # Count the occurrences of each class
+            counts = Counter(self.labels)
+            
+            # Find a target size to balance down to.
+            # E.g., cap at the size of the 2nd largest class, or use the mean.
+            # Using median is often a good compromise between throwing away data and balancing.
+            target_size = int(np.median(list(counts.values())))
+            
+            print(f"    Balancing dataset to max {target_size} sequences per class...")
+            
+            balanced_seqs = []
+            balanced_lbls = []
+            
+            # Group by class
+            indices_by_class = {c: [] for c in counts.keys()}
+            for i, lbl in enumerate(self.labels):
+                indices_by_class[lbl].append(i)
+                
+            for class_id, indices in indices_by_class.items():
+                if len(indices) > target_size:
+                    selected_indices = random.sample(indices, target_size)
+                else:
+                    selected_indices = indices
+                
+                for idx in selected_indices:
+                    balanced_seqs.append(self.sequences[idx])
+                    balanced_lbls.append(self.labels[idx])
+            
+            self.sequences = balanced_seqs
+            self.labels = balanced_lbls
+            print(f"    Dataset balanced. Total sequences: {len(self.sequences)}")
 
     def __len__(self):
         return len(self.sequences)

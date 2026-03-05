@@ -230,6 +230,20 @@ python behavior/train_behavior.py
   - `confusion_matrix.png`: Model performance per class.
   - `clip_reports/`: Detailed 180-frame behavioral timelines for all pigs in a single frame.
 
+### Step 10: Validation Video Generation
+Generate prediction overlay videos to visually evaluate the model's performance on the validation set (`video3`).
+
+```bash
+python behavior/generate_behavior_videos.py --exp LSTM-17_points-30_epoch
+```
+
+**How it works:**
+- **Input**: Uses the trained model (`best_model.pt`) from the specified `--exp` folder and the extracted features for `video3`.
+- **Processing**: 
+  - Runs frame-by-frame inference for all pigs in the validation clips.
+  - Overlays the **Predicted Label** and **Ground Truth Label** alongside the bounding box on the original frames.
+- **Outputs**: Generates `.mp4` video clips in `out/results/{experiment_name}/videos/video3/` allowing you to visually verify the model's behavior recognition accuracy in real-time.
+
 ---
 
 ## Utilities
