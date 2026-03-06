@@ -40,8 +40,8 @@ keypoints_to_use:
   - "R_B_Paw"
 
 # Training / Sequence settings
-window_size: 60      # Increased to 2 seconds for better context
-stride_train: 2      # Decreased for more overlapping training samples
+window_size: 5 # 5 seconds window      
+stride_train: 2 # 2 seconds stride      
 
 # Hyperparameters
 rnn_type: "LSTM"

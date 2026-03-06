@@ -196,53 +196,67 @@ python behavior/add_behavior_labels.py
 - **Output**: COCO JSONs in `data/annotations/behavior/` with a new `"action"` field.
 
 ### Step 8: Feature Extraction
-Convert the behavioral dataset into compact numerical tensors for model training.
+Convert annotations into compact numerical tensors for training. There are two feature flows:
+
+- Visual features (CNN embeddings + bbox geometry + motion):
+
+```bash
+# Run inside the project virtualenv (.venv)
+source .venv/bin/activate
+python behavior/visual_feature_extractor.py
+```
+
+- Input: COCO JSONs in `data/annotations/behavior/` and frames in `data/images/frames/`.
+- Notes: The extractor resolves `file_name` robustly (handles `clip/file.png` and basename-only entries) and saves `frames` as global frame IDs (clip offset + local frame).
+- Output: `data/visual_features/{video}/track_{id}.npz` containing `features`, `labels`, and `frames`.
+
+- Pose/behavior features (pose-based):
 
 ```bash
 python behavior/feature_extractor.py
 ```
 
-**How it works:**
-- **Input**: Processes JSONs in `data/annotations/behavior/`.
-- **Processing**: 
-  - Extracts **bbox and normalized pose features** per pig/frame.
-  - Maps visibility to confidence: $v=2 \to 1.0$, $v=1 \to 0.3$.
-  - Organizes data temporally per `track_id`.
-- **Output**: Compressed NumPy files (`.npz`) in `data/features/{video_dir}/track_{id}.npz`.
+- Input: `data/annotations/behavior/` with pose annotations.
+- Output: `data/features/{video_dir}/track_{id}.npz` (pose + geometry features).
 
 ### Step 9: Model Training, Evaluation & Reports
-Train the behavior recognition model (RNN/LSTM/GRU) and automatically generate performance reports.
+Train the visual behavior model (RNN over visual embeddings) or the pose-based behavior model and produce evaluation artifacts.
+
+- Visual model training (uses `data/visual_features`):
+
+```bash
+python behavior/train_visual_behavior.py --rnn_type BiLSTM --epochs 30
+```
+
+- Input: Visual NPZs in `data/visual_features/` (video1/video2 for training, video3 for validation by default).
+- Output: experiment folder under `out/results/` (e.g. `Visual-BiLSTM-30_epoch`) containing `best_model.pt`, logs and plots.
+
+- Pose-based behavior training (existing pipeline):
 
 ```bash
 python behavior/train_behavior.py
 ```
 
-**How it works:**
-- **Input**: Uses `.npz` files from `data/features/` and hyperparameters from `config.yaml`.
-- **Training Strategy**: Uses **Video 1 & 2** for training, and **Video 3** for strictly independent validation.
-- **Processing**: 
-  - Trains the RNN model based on the sequence dynamics.
-  - Automatically selects properties (Learning Rate, Architecture, etc.) from `config.yaml`.
-- **Outputs** (Saved in `out/results/{experiment_name}`):
-  - `best_model.pt`: The trained model weights.
-  - `train.log`: Full execution logs of the training process.
-  - `loss_curve.png` & `accuracy_curve.png`: Training progress visualization.
-  - `confusion_matrix.png`: Model performance per class.
-  - `clip_reports/`: Detailed 180-frame behavioral timelines for all pigs in a single frame.
+- Input: `.npz` files from `data/features/`.
+- Output: similar reporting artifacts in `out/results/{experiment_name}`.
 
 ### Step 10: Validation Video Generation
-Generate prediction overlay videos to visually evaluate the model's performance on the validation set (`video3`).
+Create overlay videos that show model predictions vs ground truth for inspection.
+
+For the visual model (uses visual features and `best_model.pt`):
 
 ```bash
-python behavior/generate_behavior_videos.py --exp LSTM-17_points-30_epoch
+python behavior/generate_visual_videos.py --exp Visual-BiLSTM-30_epoch --video video3
 ```
 
-**How it works:**
-- **Input**: Uses the trained model (`best_model.pt`) from the specified `--exp` folder and the extracted features for `video3`.
-- **Processing**: 
-  - Runs frame-by-frame inference for all pigs in the validation clips.
-  - Overlays the **Predicted Label** and **Ground Truth Label** alongside the bounding box on the original frames.
-- **Outputs**: Generates `.mp4` video clips in `out/results/{experiment_name}/videos/video3/` allowing you to visually verify the model's behavior recognition accuracy in real-time.
+- Notes: `generate_visual_videos.py` was updated to:
+  - Map class IDs to class names reliably (avoids dict-order bugs).
+  - Use global frame IDs (from `frames` in NPZ) to align predictions to clip frames.
+  - Fall back to `data/annotations/refined/` if `data/annotations/behavior/` is not present.
+
+- Output: MP4 clips saved to `out/results/{experiment_name}/videos_visual/video3/{clip_id}.mp4`.
+
+Run the corresponding `generate_behavior_videos.py` for pose-based model outputs if needed.
 
 ---
 

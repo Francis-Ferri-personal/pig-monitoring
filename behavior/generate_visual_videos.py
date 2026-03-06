@@ -76,7 +76,15 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
         config = yaml.safe_load(f)
 
     behavior_classes = config.get("behavior_classes", {})
-    class_names = list(behavior_classes.keys())
+    # Build class name list indexed by class id to avoid relying on dict order
+    if behavior_classes:
+        max_id = max(behavior_classes.values())
+        class_names = [None] * (max_id + 1)
+        for name, idx in behavior_classes.items():
+            if 0 <= idx < len(class_names):
+                class_names[idx] = name
+    else:
+        class_names = []
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = _load_visual_model_for_video(exp_dir, video_to_eval, behavior_classes)
@@ -115,8 +123,28 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
     out_vid_dir = os.path.join(exp_dir, "videos_visual", video_to_eval)
     os.makedirs(out_vid_dir, exist_ok=True)
 
+    # Prefer the "behavior" annotations, but fall back to "refined" if needed
     anns_dir = os.path.join("data", "annotations", "behavior", video_to_eval)
+    if not os.path.exists(anns_dir):
+        alt = os.path.join("data", "annotations", "refined", video_to_eval)
+        if os.path.exists(alt):
+            print(f"Using refined annotations at: {alt}")
+            anns_dir = alt
+        else:
+            raise FileNotFoundError(f"Annotations directory not found for {video_to_eval}: tried {anns_dir} and {alt}")
     frames_dir = os.path.join("data", "images", "frames", video_to_eval)
+
+    # Build global frame offset per clip (must match order used in visual_feature_extractor)
+    clip_offsets: Dict[str, int] = {}
+    running_offset = 0
+    for jf in sorted(os.listdir(anns_dir)):
+        if not jf.endswith(".json"):
+            continue
+        with open(os.path.join(anns_dir, jf), "r") as f:
+            d = json.load(f)
+        n_frames = len(d.get("images", []))
+        clip_offsets[jf.replace(".json", "")] = running_offset
+        running_offset += n_frames
 
     colors = [
         (0, 255, 0),
@@ -159,9 +187,14 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
 
         writer = cv2.VideoWriter(out_mp4, fourcc, out_fps, (w, h))
 
-        for img_info in sorted(clip_data["images"], key=lambda x: x["frame_id"]):
+        # Images may use "frame_id" or just "id" depending on source; use fallback
+        def _get_frame_id(i):
+            return int(i.get("frame_id", i.get("id")))
+
+        for img_info in sorted(clip_data["images"], key=_get_frame_id):
             img_id = img_info["id"]
-            frame_abs = img_info["frame_id"]
+            # Global frame index (same as in NPZ) so predictions align with the right clip/frame
+            frame_abs = clip_offsets.get(clip_id, 0) + _get_frame_id(img_info)
 
             fname = os.path.basename(img_info["file_name"])
             img_path = os.path.join(clip_frames_dir, fname)
@@ -182,7 +215,10 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
                 pred_label = "Waiting"
                 if track_id in pigs_predictions and frame_abs in pigs_predictions[track_id]:
                     pred_idx = pigs_predictions[track_id][frame_abs]
-                    pred_label = class_names[pred_idx]
+                    if 0 <= pred_idx < len(class_names) and class_names[pred_idx] is not None:
+                        pred_label = class_names[pred_idx]
+                    else:
+                        pred_label = f"Cls{pred_idx}"
 
                 gt_label = ann.get("action", "Unknown")
 

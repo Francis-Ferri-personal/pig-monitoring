@@ -183,18 +183,32 @@ def extract_visual_features(
 
         print(f"\n  >>> Processing {video_name}...")
 
-        # First pass: gather per-track sequences (bbox + label + img_meta)
+        # Precompute global frame offset per clip (same order as sorted json_file)
+        clip_offsets: Dict[str, int] = {}
+        running_offset = 0
+        for jf in sorted(os.listdir(src_video_path)):
+            if not jf.endswith(".json"):
+                continue
+            with open(src_video_path / jf, "r") as f:
+                d = json.load(f)
+            n_frames = len(d.get("images", []))
+            clip_offsets[jf.replace(".json", "")] = running_offset
+            running_offset += n_frames
+
+        # First pass: gather per-track sequences (bbox + label + img_meta + global_frame_id)
         tracks_data: Dict[int, List[Dict]] = {}
 
         for json_file in sorted(os.listdir(src_video_path)):
             if not json_file.endswith(".json"):
                 continue
 
+            clip_id = json_file.replace(".json", "")
             json_path = src_video_path / json_file
             with open(json_path, "r") as f:
                 data = json.load(f)
 
             images = {img["id"]: img for img in data["images"]}
+            offset = clip_offsets.get(clip_id, 0)
 
             for ann in data["annotations"]:
                 track_id = ann.get("track_id")
@@ -216,6 +230,7 @@ def extract_visual_features(
                     action_id = action_to_id.get(action_str, 0)
 
                 frame_id = img_meta.get("frame_id", img_meta.get("id"))
+                global_frame_id = offset + int(frame_id)
 
                 file_name = img_meta.get("file_name")
                 if file_name is None:
@@ -227,6 +242,7 @@ def extract_visual_features(
                 tracks_data[track_id].append(
                     {
                         "frame_id": frame_id,
+                        "global_frame_id": global_frame_id,
                         "bbox": (x, y, w, h),
                         "img_meta": img_meta,
                         "label": action_id,
@@ -235,7 +251,7 @@ def extract_visual_features(
                     }
                 )
 
-        # Second pass: for each track, sort by frame_id, compute geometry+motion+CNN embedding
+        # Second pass: for each track, sort by global_frame_id, compute geometry+motion+CNN embedding
         video_dst = Path(dst_dir) / video_name
         video_dst.mkdir(parents=True, exist_ok=True)
 
@@ -248,7 +264,7 @@ def extract_visual_features(
                 continue
 
             instances = tracks_data[tid]
-            instances.sort(key=lambda x: x["frame_id"])
+            instances.sort(key=lambda x: x["global_frame_id"])
 
             feats_list: List[np.ndarray] = []
             labels_list: List[int] = []
@@ -263,14 +279,25 @@ def extract_visual_features(
             batch_frames: List[int] = []
 
             for inst in instances:
-                frame_id = inst["frame_id"]
+                frame_id = inst["global_frame_id"]  # use global for saving to NPZ
                 x, y, w, h = inst["bbox"]
                 img_w, img_h = inst["img_size"]
                 file_name = inst["file_name"]
 
+                # Resolve image path robustly. annotations may store file_name as
+                # "clip/frame.png" or just "frame.png". Try several sensible
+                # locations before skipping.
                 img_path = frames_root_path / video_name / file_name
                 if not img_path.exists():
-                    continue
+                    img_path_alt = frames_root_path / file_name
+                    img_path_alt2 = frames_root_path / video_name / os.path.basename(file_name)
+                    if img_path_alt.exists():
+                        img_path = img_path_alt
+                    elif img_path_alt2.exists():
+                        img_path = img_path_alt2
+                    else:
+                        print(f"!!! Missing frame for track {tid}: tried {img_path}, {img_path_alt}, {img_path_alt2}")
+                        continue
 
                 bbox_feats, prev_cx_norm, prev_cy_norm = compute_bbox_features(
                     x,
@@ -301,6 +328,10 @@ def extract_visual_features(
                 batch_bbox_feats.append(bbox_feats)
                 batch_labels.append(inst["label"])
                 batch_frames.append(frame_id)
+
+            # end for inst
+            # Optional: report how many frames were gathered for this track so user can detect skips
+            # (will appear when saving or skipping)
 
                 if len(batch_images) >= batch_size:
                     with torch.no_grad():
