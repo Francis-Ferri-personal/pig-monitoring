@@ -4,6 +4,8 @@ import numpy as np
 import yaml
 from pathlib import Path
 
+#TODO: Example keypoints features
+
 def extract_features(src_dir, dst_dir, action_to_id, kp_indices):
     """
     Extracts features from behavior-labeled COCO JSONs.

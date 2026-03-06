@@ -9,6 +9,8 @@ import yaml
 from PIL import Image
 from torchvision import models, transforms
 
+#TODO: ADD keypoints features
+
 
 def load_cnn_device(model_name: str = "resnet18") -> Tuple[torch.nn.Module, torch.device, int]:
     """

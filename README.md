@@ -172,7 +172,7 @@ Instead of raw pixels, our model uses a compact high-level representation for ea
 **Total Input Size**: $6 + (17 \times 3) = 57$ features per frame.
 
 ## 2. Temporal Processing
-- **Sliding Window**: We use a window size of **30 frames** (approx. 1 second at 30 fps) to capture the temporal dynamics of movement and posture.
+- **Sliding Window**: We use a window size of **5 frames** (approx. 1 second at 30 fps) to capture the temporal dynamics of movement and posture.
 - **LSTM (Long Short-Term Memory)**: We use a 2-layer LSTM network with 128 hidden units per layer. This architecture is ideal for sequential data where the transition between states (e.g., Standing to Walking) is crucial.
 
 ## 3. Training & Balancing
@@ -358,3 +358,11 @@ Example of `data/anns-remap.json`:
 - `"1": "5"`: Changes the tracker's `track_id: 5` to our master `track_id: 1`.
 - `"3": "2"`: Changes the tracker's `track_id: 2` to our master `track_id: 3`.
 - Mapping keys must be strings; values are converted to integers in COCO.
+
+
+# TODO: Add keypoints features
+behavior/visual_dataset.py
+behavior/visual_feature_extractor.py
+
+behavior/archive/behavior_dataset.py
+behavior/archive/feature_extractor.py

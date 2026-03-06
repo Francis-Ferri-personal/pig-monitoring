@@ -6,6 +6,8 @@ import torch
 from torch.utils.data import Dataset
 
 
+# Add keypoints features
+
 class PigVisualBehaviorDataset(Dataset):
     def __init__(
         self,
