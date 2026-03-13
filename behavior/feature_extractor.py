@@ -145,7 +145,7 @@ def pad_and_clip_bbox(
 ALLOWED_TRACK_IDS = {0, 1, 2, 3, 4}
 
 
-def extract_visual_features(
+def extract_features(
     src_dir: str,
     dst_dir: str,
     frames_root: str,
@@ -156,7 +156,7 @@ def extract_visual_features(
     batch_size: int = 16,
 ) -> None:
     """
-    Extract visual embeddings + bbox geometry + motion features from behavior-labeled COCO JSONs.
+    Extract embeddings + bbox geometry + motion features from behavior-labeled COCO JSONs.
 
     - Uses crops from data/images/frames (no masked images).
     - For each track, stores:
@@ -164,7 +164,7 @@ def extract_visual_features(
         labels:   [T]
         frames:   [T]
     """
-    print(f">>> Starting VISUAL feature extraction from {src_dir}...")
+    print(f">>> Starting feature extraction from {src_dir}...")
     os.makedirs(dst_dir, exist_ok=True)
 
     backbone, device, feat_dim = load_cnn_device(cnn_name)
@@ -384,7 +384,7 @@ def extract_visual_features(
             if idx % 5 == 0 or idx == len(track_ids):
                 print(f"    {video_name}: processed {idx}/{len(track_ids)} tracks")
 
-    print(f"\n>>> FINISHED. Visual features saved in: {dst_dir}")
+    print(f"\n>>> FINISHED. Features saved in: {dst_dir}")
 
 
 if __name__ == "__main__":
@@ -397,9 +397,9 @@ if __name__ == "__main__":
     padding_factor = config.get("bbox_padding_factor", 1.10)
 
     SRC = "data/annotations/behavior"
-    DST = "data/visual_features"
+    DST = "data/features"
 
-    extract_visual_features(
+    extract_features(
         SRC,
         DST,
         frames_root=frames_root,

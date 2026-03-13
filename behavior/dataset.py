@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 # Add keypoints features
 
-class PigVisualBehaviorDataset(Dataset):
+class PigBehaviorDataset(Dataset):
     def __init__(
         self,
         feature_dir: str,
@@ -18,10 +18,10 @@ class PigVisualBehaviorDataset(Dataset):
         balance_data: bool = False,
     ):
         """
-        Dataset for visual embedding sequences.
+        Dataset for embedding sequences.
 
         Args:
-            feature_dir (str): Root directory of extracted .npz visual features.
+            feature_dir (str): Root directory of extracted .npz features.
             video_list (list): List of video names to include (e.g. ['video1', 'video2']).
             window_size (int): Number of frames per sequence.
             stride (int): How many frames to skip between sequences (overlap).
@@ -31,7 +31,7 @@ class PigVisualBehaviorDataset(Dataset):
         self.sequences = []
         self.labels = []
 
-        print(f">>> Loading VISUAL dataset for {video_list}...")
+        print(f">>> Loading dataset for {video_list}...")
 
         for video in video_list:
             video_path = os.path.join(feature_dir, video)
@@ -59,7 +59,7 @@ class PigVisualBehaviorDataset(Dataset):
                     self.sequences.append(window)
                     self.labels.append(label)
 
-        print(f"    Loaded {len(self.sequences)} visual sequences.")
+        print(f"    Loaded {len(self.sequences)} sequences.")
 
         if balance_data and len(self.labels) > 0:
             import random
@@ -68,7 +68,7 @@ class PigVisualBehaviorDataset(Dataset):
             counts = Counter(self.labels)
             target_size = int(np.median(list(counts.values())))
 
-            print(f"    Balancing visual dataset to max {target_size} sequences per class...")
+            print(f"    Balancing dataset to max {target_size} sequences per class...")
 
             balanced_seqs = []
             balanced_lbls = []
@@ -103,10 +103,10 @@ class PigVisualBehaviorDataset(Dataset):
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
-    FEAT_DIR = "data/visual_features"
+    FEAT_DIR = "data/features"
     train_vids = ["video1", "video2"]
 
-    dataset = PigVisualBehaviorDataset(FEAT_DIR, train_vids, window_size=30, stride=5)
+    dataset = PigBehaviorDataset(FEAT_DIR, train_vids, window_size=30, stride=5)
     if len(dataset) > 0:
         loader = DataLoader(dataset, batch_size=8, shuffle=True)
         x, y = next(iter(loader))

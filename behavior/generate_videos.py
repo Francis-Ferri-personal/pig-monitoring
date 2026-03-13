@@ -8,12 +8,12 @@ import numpy as np
 import torch
 import yaml
 
-from behavior.visual_models import VisualBehaviorRNN
+from behavior.models import BehaviorRNN
 
 
-def _load_visual_model_for_video(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, int]) -> VisualBehaviorRNN:
+def _load_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, int]) -> BehaviorRNN:
     """
-    Load VisualBehaviorRNN with hyperparameters that match the training run,
+    Load BehaviorRNN with hyperparameters that match the training run,
     using summary.txt to capture CLI overrides (e.g., BiLSTM).
     """
     with open(os.path.join(exp_dir, "config_used.yaml"), "r") as f:
@@ -39,9 +39,9 @@ def _load_visual_model_for_video(exp_dir: str, video_to_eval: str, behavior_clas
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    feat_video_dir = os.path.join("data", "visual_features", video_to_eval)
+    feat_video_dir = os.path.join("data", "features", video_to_eval)
     if not os.path.exists(feat_video_dir):
-        raise FileNotFoundError(f"Visual feature directory not found: {feat_video_dir}")
+        raise FileNotFoundError(f"Feature directory not found: {feat_video_dir}")
 
     input_size = None
     for npz_file in sorted(os.listdir(feat_video_dir)):
@@ -53,7 +53,7 @@ def _load_visual_model_for_video(exp_dir: str, video_to_eval: str, behavior_clas
     if input_size is None:
         raise RuntimeError(f"No .npz visual feature files found in {feat_video_dir}")
 
-    model = VisualBehaviorRNN(
+    model = BehaviorRNN(
         rnn_type=rnn_type,
         input_size=input_size,
         hidden_size=hidden_size,
@@ -67,9 +67,9 @@ def _load_visual_model_for_video(exp_dir: str, video_to_eval: str, behavior_clas
     return model
 
 
-def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> None:
+def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> None:
     """
-    Generate overlay videos for the visual model using visual embeddings and behavior annotations.
+    Generate overlay videos for the model using embeddings and behavior annotations.
     """
     exp_dir = os.path.join("out", "results", exp_name)
     with open(os.path.join(exp_dir, "config_used.yaml"), "r") as f:
@@ -87,15 +87,15 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
         class_names = []
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = _load_visual_model_for_video(exp_dir, video_to_eval, behavior_classes)
+    model = _load_model(exp_dir, video_to_eval, behavior_classes)
 
-    # 1. Run Inference on visual features
-    feat_video_dir = os.path.join("data", "visual_features", video_to_eval)
+    # 1. Run Inference on features
+    feat_video_dir = os.path.join("data", "features", video_to_eval)
     window_size = config.get("window_size", 30)
 
     pigs_predictions: Dict[int, Dict[int, int]] = {}
 
-    print(f">>> Running VISUAL inference for {video_to_eval}...")
+    print(f">>> Running inference for {video_to_eval}...")
     for npz_file in sorted(os.listdir(feat_video_dir)):
         if not npz_file.endswith(".npz"):
             continue
@@ -120,7 +120,7 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
         pigs_predictions[track_id] = track_pred_map
 
     # 2. Generate videos overlaying predictions
-    out_vid_dir = os.path.join(exp_dir, "videos_visual", video_to_eval)
+    out_vid_dir = os.path.join(exp_dir, "videos", video_to_eval)
     os.makedirs(out_vid_dir, exist_ok=True)
 
     # Prefer the "behavior" annotations, but fall back to "refined" if needed
@@ -134,7 +134,7 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
             raise FileNotFoundError(f"Annotations directory not found for {video_to_eval}: tried {anns_dir} and {alt}")
     frames_dir = os.path.join("data", "images", "frames", video_to_eval)
 
-    # Build global frame offset per clip (must match order used in visual_feature_extractor)
+    # Build global frame offset per clip (must match order used in feature_extractor)
     clip_offsets: Dict[str, int] = {}
     running_offset = 0
     for jf in sorted(os.listdir(anns_dir)):
@@ -154,7 +154,7 @@ def generate_visual_prediction_videos(exp_name: str, video_to_eval: str = "video
         (255, 0, 255),
     ]
 
-    print(f">>> Generating VISUAL clips in {out_vid_dir}...")
+    print(f">>> Generating clips in {out_vid_dir}...")
 
     for json_file in sorted(os.listdir(anns_dir)):
         if not json_file.endswith(".json"):
@@ -278,5 +278,5 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, default="video3", help="Video folder to evaluate (default: video3)")
     args = parser.parse_args()
 
-    generate_visual_prediction_videos(args.exp, video_to_eval=args.video)
+    generate_prediction_videos(args.exp, video_to_eval=args.video)
 

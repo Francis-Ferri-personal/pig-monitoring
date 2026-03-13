@@ -9,12 +9,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from behavior.visual_models import VisualBehaviorRNN
+from behavior.models import BehaviorRNN
 
 
-def _load_visual_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, int]) -> VisualBehaviorRNN:
+def _load_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, int]) -> BehaviorRNN:
     """
-    Instantiate VisualBehaviorRNN with the correct hyperparameters inferred
+    Instantiate BehaviorRNN with the correct hyperparameters inferred
     from the experiment's summary.txt (preferred) or config_used.yaml.
     """
     # Defaults from config (used mainly for non-visual settings)
@@ -42,9 +42,9 @@ def _load_visual_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    feat_video_dir = os.path.join("data", "visual_features", video_to_eval)
+    feat_video_dir = os.path.join("data", "features", video_to_eval)
     if not os.path.exists(feat_video_dir):
-        raise FileNotFoundError(f"Visual feature directory not found: {feat_video_dir}")
+        raise FileNotFoundError(f"Feature directory not found: {feat_video_dir}")
 
     # Infer input_size from first .npz
     input_size = None
@@ -57,7 +57,7 @@ def _load_visual_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[
     if input_size is None:
         raise RuntimeError(f"No .npz visual feature files found in {feat_video_dir}")
 
-    model = VisualBehaviorRNN(
+    model = BehaviorRNN(
         rnn_type=rnn_type,
         input_size=input_size,
         hidden_size=hidden_size,
@@ -71,7 +71,7 @@ def _load_visual_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[
     return model
 
 
-def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None:
+def generate_report(exp_name: str, video_to_eval: str = "video3") -> None:
     """
     Generate temporal clip reports (pred vs GT) for the visual behavior model.
     """
@@ -83,11 +83,11 @@ def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None
     class_names = list(behavior_classes.keys())
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = _load_visual_model(exp_dir, video_to_eval, behavior_classes)
+    model = _load_model(exp_dir, video_to_eval, behavior_classes)
 
-    feat_video_dir = os.path.join("data", "visual_features", video_to_eval)
+    feat_video_dir = os.path.join("data", "features", video_to_eval)
     if not os.path.exists(feat_video_dir):
-        print(f"!!! Error: Visual feature directory {feat_video_dir} not found.")
+        print(f"!!! Error: Feature directory {feat_video_dir} not found.")
         return
 
     window_size = config.get("window_size", 30)
@@ -97,7 +97,7 @@ def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None
     pigs_gt: Dict[int, np.ndarray] = {}
     max_video_frames = 0
 
-    print(f">>> Running VISUAL inference for all pigs in {video_to_eval}...")
+    print(f">>> Running inference for all pigs in {video_to_eval}...")
 
     for npz_file in sorted(os.listdir(feat_video_dir)):
         if not npz_file.endswith(".npz"):
@@ -125,13 +125,13 @@ def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None
         pigs_predictions[track_id] = preds
         pigs_gt[track_id] = gt
 
-    report_dir = os.path.join(exp_dir, "clip_reports_visual", video_to_eval)
+    report_dir = os.path.join(exp_dir, "clip_reports", video_to_eval)
     os.makedirs(report_dir, exist_ok=True)
 
     num_clips = int(np.ceil(max_video_frames / frames_per_clip))
     colors = matplotlib.colormaps["tab10"]
 
-    print(f">>> Creating {num_clips} VISUAL clip reports...")
+    print(f">>> Creating {num_clips} clip reports...")
 
     for c in range(num_clips):
         start = c * frames_per_clip
@@ -154,7 +154,7 @@ def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None
                         linewidth=2,
                     )
 
-        plt.title(f"VISUAL Behavior Predictions - {video_to_eval} - Clip {c+1:02d}")
+        plt.title(f"Behavior Predictions - {video_to_eval} - Clip {c+1:02d}")
         plt.xlabel("Frame")
         plt.ylabel("Action")
         plt.yticks(range(len(class_names)), class_names)
@@ -182,7 +182,7 @@ def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None
                         linewidth=2,
                     )
 
-        plt.title(f"VISUAL Behavior Ground Truth - {video_to_eval} - Clip {c+1:02d}")
+        plt.title(f"Behavior Ground Truth - {video_to_eval} - Clip {c+1:02d}")
         plt.xlabel("Frame")
         plt.ylabel("Action")
         plt.yticks(range(len(class_names)), class_names)
@@ -193,7 +193,7 @@ def generate_visual_report(exp_name: str, video_to_eval: str = "video3") -> None
         plt.savefig(os.path.join(report_dir, f"{c+1:02d}_gt.png"))
         plt.close()
 
-    print(f">>> Successfully generated VISUAL clip reports in: {report_dir}")
+    print(f">>> Successfully generated clip reports in: {report_dir}")
 
 
 if __name__ == "__main__":
@@ -204,5 +204,5 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, default="video3", help="Video folder to evaluate (default: video3)")
     args = parser.parse_args()
 
-    generate_visual_report(args.exp, video_to_eval=args.video)
+    generate_report(args.exp, video_to_eval=args.video)
 

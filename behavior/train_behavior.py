@@ -15,8 +15,8 @@ import yaml
 from sklearn.metrics import classification_report, confusion_matrix
 from torch.utils.data import DataLoader
 
-from behavior.visual_dataset import PigVisualBehaviorDataset
-from behavior.visual_models import VisualBehaviorRNN
+from behavior.dataset import PigBehaviorDataset
+from behavior.models import BehaviorRNN
 
 matplotlib.use("Agg")
 
@@ -39,7 +39,7 @@ def plot_results(train_history, val_history, metric_name, save_path):
     plt.figure(figsize=(10, 6))
     plt.plot(train_history, label="Train")
     plt.plot(val_history, label="Validation")
-    plt.title(f"Pig Behavior Recognition (Visual) - {metric_name}")
+    plt.title(f"Pig Behavior Recognition - {metric_name}")
     plt.xlabel("Epoch")
     plt.ylabel(metric_name)
     plt.legend()
@@ -59,7 +59,7 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path):
         xticklabels=class_names,
         yticklabels=class_names,
     )
-    plt.title("Confusion Matrix (Visual Model)")
+    plt.title("Confusion Matrix (Model)")
     plt.xlabel("Predicted")
     plt.ylabel("Actual")
     plt.tight_layout()
@@ -67,7 +67,7 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path):
     plt.close()
 
 
-def train_visual_model(args):
+def train_model(args):
     # Load Config
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
@@ -81,7 +81,7 @@ def train_visual_model(args):
     batch_size = args.batch_size if args.batch_size else config.get("batch_size", 32)
 
     # Experiment folder
-    exp_name = f"Visual-{rnn_type}-{epochs}_epoch"
+    exp_name = f"{rnn_type}-{epochs}_epoch"
     exp_dir = os.path.join("out", "results", exp_name)
     os.makedirs(exp_dir, exist_ok=True)
     shutil.copy("config.yaml", os.path.join(exp_dir, "config_used.yaml"))
@@ -90,25 +90,25 @@ def train_visual_model(args):
     sys.stdout = Logger(os.path.join(exp_dir, "train.log"))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\n>>> Visual Experiment: {exp_name}")
+    print(f"\n>>> Experiment: {exp_name}")
     print(f">>> Device: {device}")
 
-    # Data loaders (visual features)
-    FEAT_DIR = "data/visual_features"
+    # Data loaders (features)
+    FEAT_DIR = "data/features"
     train_vids = ["video1", "video2"]
     val_vids = ["video3"]
 
     window_size = config.get("window_size", 30)
     stride = config.get("stride_train", 5)
 
-    train_ds = PigVisualBehaviorDataset(
+    train_ds = PigBehaviorDataset(
         FEAT_DIR,
         train_vids,
         window_size=window_size,
         stride=stride,
         balance_data=False,
     )
-    val_ds = PigVisualBehaviorDataset(
+    val_ds = PigBehaviorDataset(
         FEAT_DIR,
         val_vids,
         window_size=window_size,
@@ -117,7 +117,7 @@ def train_visual_model(args):
     )
 
     if len(train_ds) == 0:
-        print("!!! Error: Visual training dataset is empty. Did you run visual_feature_extractor.py?")
+        print("!!! Error: Training dataset is empty. Did you run feature_extractor.py?")
         return
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
@@ -128,10 +128,10 @@ def train_visual_model(args):
     # Infer input_size from one batch (CNN emb + geom + deltas)
     sample_x, _ = next(iter(train_loader))
     input_size = sample_x.shape[-1]
-    print(f">>> Inferred input_size from visual features: {input_size}")
+    print(f">>> Inferred input_size from features: {input_size}")
 
     # Model
-    model = VisualBehaviorRNN(
+    model = BehaviorRNN(
         rnn_type=rnn_type,
         input_size=input_size,
         hidden_size=hidden_size,
@@ -159,7 +159,7 @@ def train_visual_model(args):
     best_val_acc = -1.0
     model_save_path = os.path.join(exp_dir, "best_model.pt")
 
-    print(">>> Starting Visual Training...")
+    print(">>> Starting Training...")
     for epoch in range(epochs):
         model.train()
         train_loss, correct, total = 0.0, 0, 0
@@ -213,7 +213,7 @@ def train_visual_model(args):
             best_val_acc = val_acc
             torch.save(model.state_dict(), model_save_path)
             best_preds, best_labels = list(all_val_preds), list(all_val_labels)
-            print("    [Saved Best Visual Model]")
+            print("    [Saved Best Model]")
 
     # Plots & summary
     plot_results(
@@ -286,7 +286,7 @@ def train_visual_model(args):
     with open(os.path.join(exp_dir, "summary.txt"), "w") as f:
         f.write(summary_text)
 
-    print(f"\n>>> FINISHED. Visual results in: {exp_dir}")
+    print(f"\n>>> FINISHED. Results in: {exp_dir}")
 
 
 if __name__ == "__main__":
@@ -298,5 +298,5 @@ if __name__ == "__main__":
     parser.add_argument("--num_layers", type=int)
     parser.add_argument("--batch_size", type=int)
     args = parser.parse_args()
-    train_visual_model(args)
+    train_model(args)
 

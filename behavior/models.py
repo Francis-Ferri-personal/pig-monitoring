@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class VisualBehaviorRNN(nn.Module):
+class BehaviorRNN(nn.Module):
     def __init__(
         self,
         rnn_type: str = "LSTM",
@@ -16,7 +16,7 @@ class VisualBehaviorRNN(nn.Module):
         geom_hidden: int = 64,
     ):
         """
-        Recurrent model for visual embeddings + bbox/motion features.
+        Recurrent model for embeddings + bbox/motion features.
 
         Args:
             rnn_type (str): 'RNN', 'GRU', 'LSTM' or 'BiLSTM'
@@ -117,7 +117,7 @@ class VisualBehaviorRNN(nn.Module):
 
 if __name__ == "__main__":
     for r_type in ["RNN", "GRU", "LSTM", "BiLSTM"]:
-        model = VisualBehaviorRNN(rnn_type=r_type, input_size=523, hidden_size=128, num_classes=5)
+        model = BehaviorRNN(rnn_type=r_type, input_size=523, hidden_size=128, num_classes=5)
         dummy_input = torch.randn(8, 60, 523)
         output = model(dummy_input)
         print(f"[{r_type}] Output shape:", output.shape)
