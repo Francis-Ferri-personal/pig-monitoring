@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix
 from torch.utils.data import DataLoader
 
 from behavior.visual_dataset import PigVisualBehaviorDataset
@@ -245,6 +245,44 @@ def train_visual_model(args):
         f"Best Val Acc: {best_val_acc:.2f}%\n"
         f"Input Size: {input_size}\n"
     )
+    
+    # Generate detailed classification report dict
+    report_dict = classification_report(best_labels, best_preds, target_names=class_names, zero_division=0, output_dict=True)
+    
+    # Calculate Accuracy per class
+    cm = confusion_matrix(best_labels, best_preds)
+    total_samples_cm = np.sum(cm)
+    accuracies = {}
+    for i, class_name in enumerate(class_names):
+        tp = cm[i, i]
+        fp = np.sum(cm[:, i]) - tp
+        fn = np.sum(cm[i, :]) - tp
+        tn = total_samples_cm - (tp + fp + fn)
+        accuracies[class_name] = (tp + tn) / total_samples_cm
+
+    # Build custom report string
+    report_str = "                   accuracy  precision    recall  f1-score   support\n\n"
+    for class_name in class_names:
+        metrics = report_dict[class_name]
+        acc = accuracies[class_name]
+        report_str += f"{class_name:>16}       {acc:.2f}       {metrics['precision']:.2f}      {metrics['recall']:.2f}      {metrics['f1-score']:.2f}      {int(metrics['support'])}\n"
+        
+    # Calculate global averages for accuracy
+    macro_acc = np.mean(list(accuracies.values()))
+    weighted_acc = sum(accuracies[c] * report_dict[c]['support'] for c in class_names) / total_samples_cm
+
+    report_str += "\n"
+    for avg_type in ['macro avg', 'weighted avg']:
+        metrics = report_dict[avg_type]
+        avg_acc = macro_acc if avg_type == 'macro avg' else weighted_acc
+        report_str += f"{avg_type:>16}       {avg_acc:.2f}       {metrics['precision']:.2f}      {metrics['recall']:.2f}      {metrics['f1-score']:.2f}      {int(metrics['support'])}\n"
+    
+    print(f"\n>>> Final Evaluation Metrics on Validation Set ({val_vids[0]}):")
+    print(report_str)
+    
+    summary_text += f"\n\n=== Final Evaluation Metrics on Validation Set ({val_vids[0]}) ===\n"
+    summary_text += report_str
+
     with open(os.path.join(exp_dir, "summary.txt"), "w") as f:
         f.write(summary_text)
 
