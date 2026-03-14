@@ -18,6 +18,8 @@ behavior_classes:
   Feeding: 3
   Drinking: 4
 
+use_keypoints: True # Whether to include keypoints in feature extraction and training
+
 # Keypoints to extract (using the names consistent with the pose estimation)
 # These will be used to filter and order features in the feature_extractor
 keypoints_to_use:
@@ -44,8 +46,8 @@ window_size: 5 # 5 seconds window
 stride_train: 2 # 2 seconds stride      
 
 # Hyperparameters
-rnn_type: "LSTM"
-epochs: 30           # Increased epochs
+rnn_type: "GRU"
+epochs: 80           # Increased epochs
 learning_rate: 0.0005 # Slower learning rate to prevent early overfitting
 hidden_size: 128     # Increased capacity
 num_layers: 2

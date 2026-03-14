@@ -79,9 +79,11 @@ def train_model(args):
     hidden_size = args.hidden_size if args.hidden_size else config.get("hidden_size", 128)
     num_layers = args.num_layers if args.num_layers else config.get("num_layers", 2)
     batch_size = args.batch_size if args.batch_size else config.get("batch_size", 32)
+    use_keypoints = config.get("use_keypoints", False)
 
     # Experiment folder
-    exp_name = f"{rnn_type}-{epochs}_epoch"
+    exp_prefix = "keypoints-" if use_keypoints else ""
+    exp_name = f"{exp_prefix}{rnn_type}-{epochs}_epoch"
     exp_dir = os.path.join("out", "results", exp_name)
     os.makedirs(exp_dir, exist_ok=True)
     shutil.copy("config.yaml", os.path.join(exp_dir, "config_used.yaml"))
@@ -94,7 +96,7 @@ def train_model(args):
     print(f">>> Device: {device}")
 
     # Data loaders (features)
-    FEAT_DIR = "data/features"
+    FEAT_DIR = "data/features_kp" if use_keypoints else "data/features"
     train_vids = ["video1", "video2"]
     val_vids = ["video3"]
 

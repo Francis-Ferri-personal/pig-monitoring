@@ -154,6 +154,7 @@ def extract_features(
     image_size: int = 224,
     bbox_padding_factor: float = 1.1,
     batch_size: int = 16,
+    use_keypoints: bool = False,
 ) -> None:
     """
     Extract embeddings + bbox geometry + motion features from behavior-labeled COCO JSONs.
@@ -246,6 +247,7 @@ def extract_features(
                         "frame_id": frame_id,
                         "global_frame_id": global_frame_id,
                         "bbox": (x, y, w, h),
+                        "keypoints": ann.get("keypoints", []),
                         "img_meta": img_meta,
                         "label": action_id,
                         "file_name": file_name,
@@ -277,6 +279,7 @@ def extract_features(
 
             batch_images: List[torch.Tensor] = []
             batch_bbox_feats: List[List[float]] = []
+            batch_kp_feats: List[List[float]] = []
             batch_labels: List[int] = []
             batch_frames: List[int] = []
 
@@ -328,6 +331,18 @@ def extract_features(
 
                 batch_images.append(tensor)
                 batch_bbox_feats.append(bbox_feats)
+
+                if use_keypoints:
+                    keypoints = inst.get("keypoints", [])
+                    kp_feat = []
+                    if keypoints and len(keypoints) >= 51:
+                        for i in range(0, 51, 3):
+                            kx, ky, kv = keypoints[i], keypoints[i+1], keypoints[i+2]
+                            kp_feat.extend([kx / img_w, ky / img_h, kv])
+                    else:
+                        kp_feat = [0.0] * 51
+                    batch_kp_feats.append(kp_feat)
+
                 batch_labels.append(inst["label"])
                 batch_frames.append(frame_id)
 
@@ -342,16 +357,24 @@ def extract_features(
                     emb_np_batch = emb_batch.cpu().numpy().astype(np.float32)
 
                     for j in range(len(batch_images)):
-                        full_vector = np.concatenate(
-                            [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32)],
-                            axis=0,
-                        )
+                        if use_keypoints:
+                            full_vector = np.concatenate(
+                                [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
+                                axis=0,
+                            )
+                        else:
+                            full_vector = np.concatenate(
+                                [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32)],
+                                axis=0,
+                            )
                         feats_list.append(full_vector)
                         labels_list.append(batch_labels[j])
                         frames_list.append(batch_frames[j])
 
                     batch_images.clear()
                     batch_bbox_feats.clear()
+                    if use_keypoints:
+                        batch_kp_feats.clear()
                     batch_labels.clear()
                     batch_frames.clear()
 
@@ -363,10 +386,16 @@ def extract_features(
                 emb_np_batch = emb_batch.cpu().numpy().astype(np.float32)
 
                 for j in range(len(batch_images)):
-                    full_vector = np.concatenate(
-                        [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32)],
-                        axis=0,
-                    )
+                    if use_keypoints:
+                        full_vector = np.concatenate(
+                            [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
+                            axis=0,
+                        )
+                    else:
+                        full_vector = np.concatenate(
+                            [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32)],
+                            axis=0,
+                        )
                     feats_list.append(full_vector)
                     labels_list.append(batch_labels[j])
                     frames_list.append(batch_frames[j])
@@ -396,8 +425,9 @@ if __name__ == "__main__":
     frames_root = config.get("frames_folder", "data/images/frames")
     padding_factor = config.get("bbox_padding_factor", 1.10)
 
+    use_keypoints = config.get("use_keypoints", False)
     SRC = "data/annotations/behavior"
-    DST = "data/features"
+    DST = "data/features_kp" if use_keypoints else "data/features"
 
     extract_features(
         SRC,
@@ -408,5 +438,6 @@ if __name__ == "__main__":
         image_size=224,
         bbox_padding_factor=padding_factor,
         batch_size=16,
+        use_keypoints=use_keypoints,
     )
 
