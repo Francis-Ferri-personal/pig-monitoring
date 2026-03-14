@@ -164,12 +164,13 @@ This system implements a deep learning pipeline to classify pig behaviors into f
 
 ## 1. Feature Engineering
 Instead of raw pixels, our model uses a compact high-level representation for each pig in every frame:
-- **Geometry Features (6D)**: Normalized BBox area, Aspect Ratio, Normalized Center coordinates ($x, y$), and Normalized Dimensions ($w, h$).
-- **Pose Features (17 keypoints x 3)**: For each keypoint (ears, nose, shoulders, hips, etc.):
-  - Relative coordinates $(x, y)$ normalized to the individual pig's BBox.
-  - Visibility-based confidence score ($v=2 \to 1.0$, $v=1 \to 0.3$, $v=0 \to 0.0$).
+- **Geometry Features (11D)**: Normalized BBox area, Aspect Ratio, Normalized Center coordinates ($x, y$), Normalized Dimensions ($w, h$), and Enriched Motion ($dx, dy$, speed).
+- **Engineered Pose Features (40D)** (Optional, toggle in `config.yaml`): 
+  - Scale-invariant distances to **Neck** and **Tail** root points.
+  - Body orientation (Neck-Tail vector angle).
+  - Joint visibility scores.
 
-**Total Input Size**: $6 + (17 \times 3) = 57$ features per frame.
+**Total Input Size**: $512$ (CNN Embedding) $+ 11$ (Geometry) $+ 40$ (Keypoints) $= 563$ features per frame.
 
 ## 2. Temporal Processing
 - **Sliding Window**: We use a window size of **5 frames** (approx. 1 second at 30 fps) to capture the temporal dynamics of movement and posture.
@@ -196,67 +197,43 @@ python behavior/add_behavior_labels.py
 - **Output**: COCO JSONs in `data/annotations/behavior/` with a new `"action"` field.
 
 ### Step 8: Feature Extraction
-Convert annotations into compact numerical tensors for training. There are two feature flows:
-
-- Visual features (CNN embeddings + bbox geometry + motion):
+Convert annotations into compact numerical tensors (NPZ) for training. The script extracts visual embeddings from a ResNet-18 backbone, bounding box geometry, and (optionally) engineered keypoints.
 
 ```bash
 # Run inside the project virtualenv (.venv)
 source .venv/bin/activate
-python behavior/visual_feature_extractor.py
-```
-
-- Input: COCO JSONs in `data/annotations/behavior/` and frames in `data/images/frames/`.
-- Notes: The extractor resolves `file_name` robustly (handles `clip/file.png` and basename-only entries) and saves `frames` as global frame IDs (clip offset + local frame).
-- Output: `data/visual_features/{video}/track_{id}.npz` containing `features`, `labels`, and `frames`.
-
-- Pose/behavior features (pose-based):
-
-```bash
 python behavior/feature_extractor.py
 ```
 
-- Input: `data/annotations/behavior/` with pose annotations.
-- Output: `data/features/{video_dir}/track_{id}.npz` (pose + geometry features).
+- **Configuration**: Set `use_keypoints: True` in `config.yaml` to include engineered geometric features.
+- **How it works**:
+  - Resolves `file_name` paths robustly.
+  - Normalizes keypoints to joint-to-joint distances centered on the neck/tail.
+- **Output**: 
+  - Without keypoints: `data/features/{video}/track_{id}.npz`
+  - With keypoints: `data/features_kp/{video}/track_{id}.npz` (automatically handled by the script).
 
 ### Step 9: Model Training, Evaluation & Reports
-Train the visual behavior model (RNN over visual embeddings) or the pose-based behavior model and produce evaluation artifacts.
-
-- Visual model training (uses `data/visual_features`):
+Train the behavior recognition model. The script supports `RNN`, `LSTM`, `GRU`, and `BiLSTM` architectures.
 
 ```bash
-python behavior/train_visual_behavior.py --rnn_type BiLSTM --epochs 30
+python behavior/train_behavior.py --rnn_type BiLSTM --epochs 80
 ```
 
-- Input: Visual NPZs in `data/visual_features/` (video1/video2 for training, video3 for validation by default).
-- Output: experiment folder under `out/results/` (e.g. `Visual-BiLSTM-30_epoch`) containing `best_model.pt`, logs and plots.
+- **Input**: Reads from `data/features_kp` or `data/features` depending on the `use_keypoints` flag in `config.yaml`.
+- **Logic**: Automatically balances classes using inverted frequency weights and uses the "Independent Video" split (Video 1 & 2 for train, Video 3 for validation).
+- **Output**: Experiment folder under `out/results/` (e.g., `keypoints-BiLSTM-80_epoch`) containing `best_model.pt`, training logs, confusion matrices, and accuracy plots.
 
-- Pose-based behavior training (existing pipeline):
-
-```bash
-python behavior/train_behavior.py
-```
-
-- Input: `.npz` files from `data/features/`.
-- Output: similar reporting artifacts in `out/results/{experiment_name}`.
 
 ### Step 10: Validation Video Generation
 Create overlay videos that show model predictions vs ground truth for inspection.
 
-For the visual model (uses visual features and `best_model.pt`):
-
 ```bash
-python behavior/generate_visual_videos.py --exp Visual-BiLSTM-30_epoch --video video3
+python behavior/generate_videos.py --exp keypoints-BiLSTM-80_epoch --video video3
 ```
 
-- Notes: `generate_visual_videos.py` was updated to:
-  - Map class IDs to class names reliably (avoids dict-order bugs).
-  - Use global frame IDs (from `frames` in NPZ) to align predictions to clip frames.
-  - Fall back to `data/annotations/refined/` if `data/annotations/behavior/` is not present.
-
-- Output: MP4 clips saved to `out/results/{experiment_name}/videos_visual/video3/{clip_id}.mp4`.
-
-Run the corresponding `generate_behavior_videos.py` for pose-based model outputs if needed.
+- **Logic**: Uses the `best_model.pt` from the experiment folder to generate predictions frame-by-frame and overlays them on the original frames.
+- **Output**: MP4 clips saved to `out/results/{experiment_name}/videos_visual/video3/{clip_id}.mp4`.
 
 ---
 
@@ -360,9 +337,3 @@ Example of `data/anns-remap.json`:
 - Mapping keys must be strings; values are converted to integers in COCO.
 
 
-# TODO: Add keypoints features
-behavior/visual_dataset.py
-behavior/visual_feature_extractor.py
-
-behavior/archive/behavior_dataset.py
-behavior/archive/feature_extractor.py

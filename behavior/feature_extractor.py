@@ -111,6 +111,55 @@ def compute_bbox_features(
     return feats, cx_norm, cy_norm
 
 
+def compute_engineered_keypoint_features(
+    keypoints: List[float], img_w: int, img_h: int, bbox: Tuple[float, float, float, float]
+) -> List[float]:
+    """
+    Convert raw COCO keypoints (x, y, v) into engineered geometric features.
+    17 keypoints -> 51 raw values.
+    Returns:
+    - Relative positions to 'Neck' (kp index 3)
+    - Distances to 'Neck' and 'Root of tail' (kp index 4)
+    - Body length (Neck to Tail)
+    - All distances normalized by BBox diagonal.
+    """
+    if len(keypoints) < 51:
+        return [0.0] * 40  # Return fixed size padding if no KPs
+
+    kp_array = np.array(keypoints).reshape(-1, 3)  # [17, 3]
+    ks = kp_array[:, :2]  # [17, 2]
+    vis = kp_array[:, 2]  # [17]
+
+    # BBox diagonal for scale normalization
+    _, _, bw, bh = bbox
+    diag = (bw**2 + bh**2)**0.5 + 1e-6
+
+    # Reference points: Neck=3, Root of tail=4
+    neck = ks[3]
+    tail = ks[4]
+
+    # 1. Distances to Neck (normalized by diag)
+    dist_to_neck = np.linalg.norm(ks - neck, axis=1) / diag
+
+    # 2. Distances to Tail (normalized by diag)
+    dist_to_tail = np.linalg.norm(ks - tail, axis=1) / diag
+
+    # 3. Body Vector & Length
+    body_vec = tail - neck
+    body_len = np.linalg.norm(body_vec) / diag
+    body_angle = np.arctan2(body_vec[1], body_vec[0]) / np.pi  # Normalized [-1, 1]
+
+    # 4. Joint Visibility
+    visibility = vis / 2.0  # COCO: 0=no, 1=hidden, 2=visible -> [0, 0.5, 1]
+
+    # Combine: [dist_to_neck (17), dist_to_tail (17), body_len (1), body_angle (1), visibility (4 key ones)]
+    feat = dist_to_neck.tolist() + dist_to_tail.tolist() + [body_len, body_angle] + visibility[[3, 4, 13, 16]].tolist()
+    return [float(x) for x in feat]
+
+
+
+
+
 def pad_and_clip_bbox(
     x: float,
     y: float,
@@ -334,21 +383,13 @@ def extract_features(
 
                 if use_keypoints:
                     keypoints = inst.get("keypoints", [])
-                    kp_feat = []
-                    if keypoints and len(keypoints) >= 51:
-                        for i in range(0, 51, 3):
-                            kx, ky, kv = keypoints[i], keypoints[i+1], keypoints[i+2]
-                            kp_feat.extend([kx / img_w, ky / img_h, kv])
-                    else:
-                        kp_feat = [0.0] * 51
+                    kp_feat = compute_engineered_keypoint_features(keypoints, img_w, img_h, (x, y, w, h))
                     batch_kp_feats.append(kp_feat)
 
                 batch_labels.append(inst["label"])
                 batch_frames.append(frame_id)
-
-            # end for inst
-            # Optional: report how many frames were gathered for this track so user can detect skips
-            # (will appear when saving or skipping)
+                # Optional: report how many frames were gathered for this track so user can detect skips
+                # (will appear when saving or skipping)
 
                 if len(batch_images) >= batch_size:
                     with torch.no_grad():
