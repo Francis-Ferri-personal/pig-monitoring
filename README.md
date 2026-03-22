@@ -198,7 +198,7 @@ The dataset is highly imbalanced (pigs spend most of their time Lying).
 
 ---
 
-### Step 6.5: Convert Behavior Labels from Excel
+#### Convert Behavior Labels from Excel
 Before integrating labels, convert the manual annotations from Excel to the required CSV format. This script also applies the necessary filters for problematic segments in Video 4 (excludes clips 05 and 06 entirely, and filters specific frame ranges in clips 04 and 07).
 
 ```bash
