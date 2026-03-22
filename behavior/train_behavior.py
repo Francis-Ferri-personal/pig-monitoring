@@ -67,6 +67,46 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path):
     plt.close()
 
 
+def get_detailed_report(y_true, y_pred, class_names):
+    report_dict = classification_report(
+        y_true, y_pred, target_names=class_names, zero_division=0, output_dict=True
+    )
+    cm = confusion_matrix(y_true, y_pred)
+    total_samples = np.sum(cm)
+
+    accuracies = {}
+    for i, class_name in enumerate(class_names):
+        tp = cm[i, i]
+        fp = np.sum(cm[:, i]) - tp
+        fn = np.sum(cm[i, :]) - tp
+        tn = total_samples - (tp + fp + fn)
+        accuracies[class_name] = (tp + tn) / max(1, total_samples)
+
+    report_str = (
+        "                   accuracy  precision    recall  f1-score   support\n\n"
+    )
+    for class_name in class_names:
+        metrics = report_dict[class_name]
+        acc = accuracies[class_name]
+        report_str += f"{class_name:>16}       {acc:.2f}       {metrics['precision']:.2f}      {metrics['recall']:.2f}      {metrics['f1-score']:.2f}      {int(metrics['support'])}\n"
+
+    macro_acc = np.mean(list(accuracies.values())) if accuracies else 0
+    weighted_acc = (
+        sum(accuracies[c] * report_dict[c]["support"] for c in class_names)
+        / max(1, total_samples)
+        if total_samples > 0
+        else 0
+    )
+
+    report_str += "\n"
+    for avg_type in ["macro avg", "weighted avg"]:
+        metrics = report_dict[avg_type]
+        avg_acc = macro_acc if avg_type == "macro avg" else weighted_acc
+        report_str += f"{avg_type:>16}       {avg_acc:.2f}       {metrics['precision']:.2f}      {metrics['recall']:.2f}      {metrics['f1-score']:.2f}      {int(metrics['support'])}\n"
+
+    return report_str
+
+
 def train_model(args):
     # Load Config
     with open("config.yaml", "r") as f:
@@ -99,6 +139,7 @@ def train_model(args):
     FEAT_DIR = "data/features_kp" if use_keypoints else "data/features"
     train_vids = ["video1", "video2"]
     val_vids = ["video3"]
+    test_vids = ["video4"]
 
     window_size = config.get("window_size", 30)
     stride = config.get("stride_train", 5)
@@ -117,6 +158,13 @@ def train_model(args):
         stride=stride,
         balance_data=False,
     )
+    test_ds = PigBehaviorDataset(
+        FEAT_DIR,
+        test_vids,
+        window_size=window_size,
+        stride=stride,
+        balance_data=False,
+    )
 
     if len(train_ds) == 0:
         print("!!! Error: Training dataset is empty. Did you run feature_extractor.py?")
@@ -124,6 +172,7 @@ def train_model(args):
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
     class_names = list(config.get("behavior_classes", {}).keys())
 
@@ -248,36 +297,8 @@ def train_model(args):
         f"Input Size: {input_size}\n"
     )
     
-    # Generate detailed classification report dict
-    report_dict = classification_report(best_labels, best_preds, target_names=class_names, zero_division=0, output_dict=True)
-    
-    # Calculate Accuracy per class
-    cm = confusion_matrix(best_labels, best_preds)
-    total_samples_cm = np.sum(cm)
-    accuracies = {}
-    for i, class_name in enumerate(class_names):
-        tp = cm[i, i]
-        fp = np.sum(cm[:, i]) - tp
-        fn = np.sum(cm[i, :]) - tp
-        tn = total_samples_cm - (tp + fp + fn)
-        accuracies[class_name] = (tp + tn) / total_samples_cm
-
-    # Build custom report string
-    report_str = "                   accuracy  precision    recall  f1-score   support\n\n"
-    for class_name in class_names:
-        metrics = report_dict[class_name]
-        acc = accuracies[class_name]
-        report_str += f"{class_name:>16}       {acc:.2f}       {metrics['precision']:.2f}      {metrics['recall']:.2f}      {metrics['f1-score']:.2f}      {int(metrics['support'])}\n"
-        
-    # Calculate global averages for accuracy
-    macro_acc = np.mean(list(accuracies.values()))
-    weighted_acc = sum(accuracies[c] * report_dict[c]['support'] for c in class_names) / total_samples_cm
-
-    report_str += "\n"
-    for avg_type in ['macro avg', 'weighted avg']:
-        metrics = report_dict[avg_type]
-        avg_acc = macro_acc if avg_type == 'macro avg' else weighted_acc
-        report_str += f"{avg_type:>16}       {avg_acc:.2f}       {metrics['precision']:.2f}      {metrics['recall']:.2f}      {metrics['f1-score']:.2f}      {int(metrics['support'])}\n"
+    # Final evaluation on validation set
+    report_str = get_detailed_report(best_labels, best_preds, class_names)
     
     print(f"\n>>> Final Evaluation Metrics on Validation Set ({val_vids[0]}):")
     print(report_str)
@@ -287,6 +308,47 @@ def train_model(args):
 
     with open(os.path.join(exp_dir, "summary.txt"), "w") as f:
         f.write(summary_text)
+
+    # FINAL TEST EVALUATION
+    if len(test_ds) > 0:
+        print("\n>>> Starting Final Evaluation on Test Set (Video 4)...")
+        model.load_state_dict(torch.load(model_save_path))
+        model.eval()
+        
+        test_correct, test_total = 0, 0
+        all_test_preds, all_test_labels = [], []
+        
+        with torch.no_grad():
+            for x, y in test_loader:
+                x, y = x.to(device), y.to(device)
+                outputs = model(x)
+                _, predicted = torch.max(outputs.data, 1)
+                test_total += y.size(0)
+                test_correct += (predicted == y).sum().item()
+                all_test_preds.extend(predicted.cpu().numpy())
+                all_test_labels.extend(y.cpu().numpy())
+
+        test_acc = 100.0 * test_correct / max(1, test_total)
+        print(f">>> Final Test Accuracy: {test_acc:.2f}%")
+        
+        # Test Confusion Matrix
+        plot_confusion_matrix(
+            all_test_labels,
+            all_test_preds,
+            class_names,
+            os.path.join(exp_dir, "confusion_matrix_test.png"),
+        )
+        
+        # Test Report
+        test_report = get_detailed_report(all_test_labels, all_test_preds, class_names)
+        print("\n>>> Test Set Classification Report:")
+        print(test_report)
+        
+        with open(os.path.join(exp_dir, "summary.txt"), "a") as f:
+            f.write(f"\n\n=== Final Test Evaluation ({test_vids[0]}) ===\n")
+            f.write(test_report)
+    else:
+        print("\n--- Skipping Test Evaluation (Video 4 not found in features)")
 
     print(f"\n>>> FINISHED. Results in: {exp_dir}")
 
