@@ -198,6 +198,22 @@ The dataset is highly imbalanced (pigs spend most of their time Lying).
 
 ---
 
+### Step 6.5: Convert Behavior Labels from Excel
+Before integrating labels, convert the manual annotations from Excel to the required CSV format. This script also applies the necessary filters for problematic segments in Video 4 (excludes clips 05 and 06 entirely, and filters specific frame ranges in clips 04 and 07).
+
+```bash
+python utils/excel_to_behavior.py
+```
+
+- **Input**: `data/pig-actions.xlsx` 
+- **Output**: `data/behavior.csv` (used in Step 7)
+- **Features**: 
+  - Standardizes behavior names (e.g., `Standing/ Walking` -> `Standing_Walking`).
+  - Maps Ear Tags (Yellow K, etc.) to IDs (**0-4**).
+  - Automatically filters out the excluded frame ranges in Video 4 to ensure data quality.
+
+---
+
 ### Step 7: Behavior Labeling
 Integrate manual behavior annotations from a CSV file into the refined dataset.
 

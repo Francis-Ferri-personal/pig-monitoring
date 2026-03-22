@@ -1,0 +1,16 @@
+timestamp,video,clip,frame,id,behavior
+8:59:59,video1,01,0,0,Lying
+8:59:59,video1,01,0,4,Lying
+9:04:38,video1,02,99,4,Standing_Walking
+9:04:39,video1,02,100,0,Lying
+9:04:39,video1,02,100,1,Lying
+9:33:52,video2,02,53,2,Standing_Walking
+9:33:52,video2,02,53,3,Lying
+9:33:52,video2,02,53,4,Standing_Walking
+9:33:53,video2,02,54,0,Lying
+9:33:53,video2,02,54,1,Standing_Walking
+9:33:53,video2,02,54,2,Standing_Walking
+9:33:53,video2,02,54,3,Lying
+11:01:51,video3,01,112,2,Standing_Walking
+11:01:51,video3,01,112,3,Feeding
+11:01:51,video3,01,112,4,Lying
