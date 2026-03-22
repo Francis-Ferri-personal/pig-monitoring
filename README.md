@@ -126,7 +126,7 @@ Once you have the SAM annotations, you can generate pose estimations (keypoints)
 # Ensure you are using the pose environment
 conda activate ./.venv-pose
 # Note: Use tools/test.py if it exists, otherwise its logic is integrated into the workflow
-python tools/test.py --device cuda:1 --batch-size 32
+python tools/gen_keypoint_anns.py --device cuda:1 --batch-size 32
 ```
 
 **How it works:**
@@ -149,11 +149,25 @@ Use the mapping configuration to ensure IDs are consistent throughout the entire
 python utils/annotation_manager.py remap --map data/anns-remap.json
 ```
 
-**3. Delete Erroneous Detections (Cleanup)**
+**3. Remove Problematic Clips**
+In Video 4, clips 05 and 06 are removed from the refined set to prevent errors during training:
+```bash
+rm data/annotations/refined/video4/05.json data/annotations/refined/video4/06.json
+```
+
+**4. Delete Erroneous Detections (Cleanup)**
 Perform final cleaning *after* remapping. If you find an incorrect track (e.g., in video 1, clip 06, the track with ID 7 is a false positive), remove it:
 ```bash
 # Note: Always run this after remapping, as remapping resets the file.
 python utils/annotation_manager.py delete-id --video 1 --clip 06 --id 7
+```
+
+**5. Delete Erroneous Frames (Range-based Cleanup)**
+If an entire segment of a clip has poor tracking or errors, remove all annotations in that frame range:
+```bash
+# Example Video 4 deletions
+python utils/annotation_manager.py delete-frames --video 4 --clip 04 --start 112 --end 179
+python utils/annotation_manager.py delete-frames --video 4 --clip 07 --start 73 --end 179
 ```
 
 > ⚠️ **Important**: If you change the default configurations (like splitting parameters or padding), you MUST update `data/anns-remap.json` and delete incorrect IDs to match the new results.
@@ -268,17 +282,17 @@ python utils/video_generator.py --all
 ```
 - **Output**: `out/videos/clip/videoX/{clip_id}.mp4`
 
-**Mode 2: Pose Keypoints (Skeletons)**
-```bash
-python utils/video_generator.py --all --pose
-```
-- **Output**: `out/videos/pose/videoX/{clip_id}.mp4`
-
-**Mode 3: SAM Masks (Segmentation)**
+**Mode 2: SAM Masks (Segmentation)**
 ```bash
 python utils/video_generator.py --all --sam
 ```
 - **Output**: `out/videos/sam/videoX/{clip_id}.mp4`
+
+**Mode 3: Pose Keypoints (Skeletons)**
+```bash
+python utils/video_generator.py --all --pose
+```
+- **Output**: `out/videos/pose/videoX/{clip_id}.mp4`
 
 **Mode 4: Refined Clips (Cleaned Tracking)**
 ```bash

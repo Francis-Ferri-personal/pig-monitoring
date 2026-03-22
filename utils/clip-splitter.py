@@ -44,10 +44,15 @@ def extract_frames():
             os.makedirs(clip_output_dir, exist_ok=True)
 
             cap = cv2.VideoCapture(clip_path)
+            if not cap.isOpened():
+                print(f"Error: Could not open video file {clip_path}")
+                continue
+
             video_fps = cap.get(cv2.CAP_PROP_FPS)
             
             if video_fps == 0:
-                print(f"Error reading FPS for {clip_name}")
+                print(f"Error: FPS is 0 for {clip_name}. The file might be corrupted or in an unsupported format.")
+                cap.release()
                 continue
 
             hop_interval = max(1, round(video_fps / fps_target))

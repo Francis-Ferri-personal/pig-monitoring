@@ -107,6 +107,12 @@ def main():
                     
                     crop = isolated[y1:y2, x1:x2]
                     
+                    # Skip zero-sized crops to avoid ZeroDivisionError during inference (in MMCV)
+                    if crop.size == 0:
+                        ann['keypoints'] = []
+                        ann['num_keypoints'] = 0
+                        continue
+                    
                     all_crops.append(crop)
                     all_meta.append((ann, x1, y1))
             

@@ -2,7 +2,6 @@ import os
 import shutil
 import argparse
 import json
-import yaml
 
 class AnnotationManager:
     def __init__(self, pose_dir="data/annotations/pose", refined_dir="data/annotations/refined"):
@@ -44,6 +43,38 @@ class AnnotationManager:
             with open(json_path, 'w') as f:
                 json.dump(data, f, indent=4)
             print(f"✓ Removed {deleted_count} instances of ID {target_id} from {video_key}/{clip_key}")
+
+    def delete_frames(self, video_id, clip_id, frame_start, frame_end):
+        self._ensure_refined_exists()
+        video_key = f"video{video_id}" if not str(video_id).startswith("video") else video_id
+        clip_key = str(clip_id).replace(".json", "")
+        
+        json_path = os.path.join(self.refined_dir, video_key, f"{clip_key}.json")
+        if not os.path.exists(json_path):
+            print(f"Error: Annotation file not found at {json_path}")
+            return
+
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+
+        # Identify image_ids that fall within the frame range
+        target_image_ids = {img['id'] for img in data.get('images', []) 
+                           if frame_start <= img.get('frame_id', -1) <= frame_end}
+        
+        if not target_image_ids:
+            print(f"--- No images found in range {frame_start}-{frame_end} for {video_key}/{clip_key}")
+            return
+
+        original_count = len(data.get('annotations', []))
+        data['annotations'] = [ann for ann in data.get('annotations', []) if ann.get('image_id') not in target_image_ids]
+        deleted_count = original_count - len(data['annotations'])
+
+        if deleted_count > 0:
+            with open(json_path, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"✓ Removed {deleted_count} annotations from frames {frame_start}-{frame_end} in {video_key}/{clip_key}")
+        else:
+            print(f"--- No annotations found in frames {frame_start}-{frame_end} for {video_key}/{clip_key}")
 
     def apply_remap(self, video_key, clip_key, clip_mapping):
         """
@@ -139,10 +170,18 @@ def main():
     remap_p.add_argument("--video")
     remap_p.add_argument("--clip")
     remap_p.add_argument("--map", required=True)
+
+    del_f = subparsers.add_parser("delete-frames")
+    del_f.add_argument("--video", required=True)
+    del_f.add_argument("--clip", required=True)
+    del_f.add_argument("--start", required=True, type=int)
+    del_f.add_argument("--end", required=True, type=int)
+
     args = parser.parse_args()
     manager = AnnotationManager()
     if args.command == "init": manager.initialize_refined()
     elif args.command == "delete-id": manager.delete_id(args.video, args.clip, args.id)
+    elif args.command == "delete-frames": manager.delete_frames(args.video, args.clip, args.start, args.end)
     elif args.command == "remap":
         if args.video and args.clip: manager.remap_ids(args.video, args.clip, args.map)
         else: manager.remap_all(args.map)
