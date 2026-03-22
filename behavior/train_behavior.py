@@ -257,7 +257,7 @@ def train_model(args):
         print(
             f"Epoch {epoch + 1}/{epochs} - "
             f"Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.2f}% | "
-            f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%"
+            f"Val Loss: {val_loss:.4f} | Val Recall (Global Acc): {val_acc:.2f}%"
         )
 
         if val_acc >= best_val_acc:
@@ -293,7 +293,7 @@ def train_model(args):
         f"LR: {lr}\n"
         f"Hidden: {hidden_size}\n"
         f"Layers: {num_layers}\n"
-        f"Best Val Acc: {best_val_acc:.2f}%\n"
+        f"Best Val Recall (Global Acc): {best_val_acc:.2f}%\n"
         f"Input Size: {input_size}\n"
     )
     
