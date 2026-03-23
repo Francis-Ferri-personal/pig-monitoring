@@ -21,9 +21,15 @@ from sam3.model_builder import build_sam3_video_predictor
 from utils.coco_utils import sam_to_coco, save_coco_to_json
 
 def get_video_id(dir_name):
-    """Extracts numeric ID from folder name like 'video1' -> 1"""
-    match = re.search(r'video(\d+)', dir_name)
-    return int(match.group(1)) if match else None
+    """Extracts numeric ID from folder name like 'video1' -> 1. If not found, uses a hash."""
+    match = re.search(r'(\d+)', dir_name)
+    if match:
+        return int(match.group(1))
+    
+    # Fallback for folder names without numbers (e.g., 'new')
+    import hashlib
+    # Generate a consistent ID in the range [1000, 9999]
+    return int(hashlib.md5(dir_name.encode()).hexdigest(), 16) % 9000 + 1000
 
 def generate_annotations(prompt_text="pig"):
     """
@@ -41,7 +47,7 @@ def generate_annotations(prompt_text="pig"):
 
     # 2. Find all video directories
     video_dirs = sorted([d for d in os.listdir(masked_base_root) 
-                        if os.path.isdir(os.path.join(masked_base_root, d)) and d.startswith("video")])
+                        if os.path.isdir(os.path.join(masked_base_root, d))])
     
     if not video_dirs:
         print("No video directories found starting with 'video' in data/images/frames_masked.")

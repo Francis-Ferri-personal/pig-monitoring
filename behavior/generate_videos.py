@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 from typing import Dict
@@ -39,7 +40,9 @@ def _load_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, in
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    feat_video_dir = os.path.join("data", "features", video_to_eval)
+    use_keypoints = config.get("use_keypoints", False)
+    feat_root = "data/features_kp" if use_keypoints else "data/features"
+    feat_video_dir = os.path.join(feat_root, video_to_eval)
     if not os.path.exists(feat_video_dir):
         raise FileNotFoundError(f"Feature directory not found: {feat_video_dir}")
 
@@ -90,7 +93,9 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
     model = _load_model(exp_dir, video_to_eval, behavior_classes)
 
     # 1. Run Inference on features
-    feat_video_dir = os.path.join("data", "features", video_to_eval)
+    use_keypoints = config.get("use_keypoints", False)
+    feat_root = "data/features_kp" if use_keypoints else "data/features"
+    feat_video_dir = os.path.join(feat_root, video_to_eval)
     window_size = config.get("window_size", 30)
 
     pigs_predictions: Dict[int, Dict[int, int]] = {}
@@ -119,19 +124,27 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
 
         pigs_predictions[track_id] = track_pred_map
 
+    # 2. Prepare collection for logs
+    inference_logs = []
+
     # 2. Generate videos overlaying predictions
     out_vid_dir = os.path.join(exp_dir, "videos", video_to_eval)
     os.makedirs(out_vid_dir, exist_ok=True)
 
-    # Prefer the "behavior" annotations, but fall back to "refined" if needed
+    # Prefer the "behavior" annotations, but fall back to "refined" or "sam" if needed
     anns_dir = os.path.join("data", "annotations", "behavior", video_to_eval)
     if not os.path.exists(anns_dir):
         alt = os.path.join("data", "annotations", "refined", video_to_eval)
+        sam_alt = os.path.join("data", "annotations", "sam", video_to_eval)
+        
         if os.path.exists(alt):
             print(f"Using refined annotations at: {alt}")
             anns_dir = alt
+        elif os.path.exists(sam_alt):
+            print(f"Using raw SAM annotations at: {sam_alt}")
+            anns_dir = sam_alt
         else:
-            raise FileNotFoundError(f"Annotations directory not found for {video_to_eval}: tried {anns_dir} and {alt}")
+            raise FileNotFoundError(f"Annotations directory not found for {video_to_eval}: tried behavior, refined, and sam folders.")
     frames_dir = os.path.join("data", "images", "frames", video_to_eval)
 
     # Build global frame offset per clip (must match order used in feature_extractor)
@@ -203,7 +216,10 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
             if frame_img is None:
                 continue
 
-            for ann in anns_by_img.get(img_id, []):
+            # Sort annotations by track_id for orderly logging and consistent drawing
+            curr_anns = sorted(anns_by_img.get(img_id, []), key=lambda a: a.get("track_id", 0))
+
+            for ann in curr_anns:
                 track_id = ann.get("track_id")
                 if track_id is None:
                     continue
@@ -220,7 +236,7 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
                     else:
                         pred_label = f"Cls{pred_idx}"
 
-                gt_label = ann.get("action", "Unknown")
+                gt_label = ann.get("action") or ann.get("behavior") or "N/A"
 
                 text_pred = f"Pred: {pred_label}"
                 text_gt = f"GT: {gt_label}"
@@ -262,20 +278,54 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
                     font_scale_gt,
                     (200, 200, 200),
                     thick_gt,
+                    1,
                 )
 
+                # Collect log data
+                inference_logs.append({
+                    "video": video_to_eval,
+                    "clip": clip_id,
+                    "frame": _get_frame_id(img_info),
+                    "track_id": track_id,
+                    "predicted_action": pred_label,
+                    "gt_action": gt_label,
+                    "bbox": ann["bbox"],
+                    "keypoints": ann.get("keypoints", [])
+                })
             writer.write(frame_img)
 
         writer.release()
         print(f"    Saved {out_mp4}")
 
-    print(f"\n>>> FINISHED generating VISUAL video reports for {video_to_eval} in: {out_vid_dir}")
+    # 3. Save logs
+    log_dir = os.path.join(out_vid_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    
+    csv_log = os.path.join(log_dir, "inference_log.csv")
+    json_log = os.path.join(log_dir, "inference_log.json")
+
+    print(f">>> Saving inference logs to {log_dir}...")
+    
+    # Save CSV
+    if inference_logs:
+        keys = inference_logs[0].keys()
+        with open(csv_log, "w", newline="") as f:
+            dict_writer = csv.DictWriter(f, fieldnames=keys)
+            dict_writer.writeheader()
+            dict_writer.writerows(inference_logs)
+
+    # Save JSON
+    with open(json_log, "w") as f:
+        json.dump(inference_logs, f, indent=4)
+
+    print(f"\n>>> FINISHED generating VISUAL video reports and logs for {video_to_eval} in: {out_vid_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp", type=str, required=True, help="Experiment folder name in out/results/")
     parser.add_argument("--video", type=str, default="video3", help="Video folder to evaluate (default: video3)")
+    parser.add_argument("--inference", action="store_true", help="Run in inference mode (look for RAW/SAM annotations)")
     args = parser.parse_args()
 
     generate_prediction_videos(args.exp, video_to_eval=args.video)
