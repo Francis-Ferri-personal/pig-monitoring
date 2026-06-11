@@ -91,6 +91,8 @@ class AnnotationManager:
         """
         Applies mapping with logic: { MASTER_ID: TRACKER_ID }
         It maps the value (Tracker) to the key (Master).
+        Additionally, resolves any ID collisions (multiple annotations with the same track_id in a single frame)
+        by keeping the one closest to the previous frame's location and reassigning the duplicates to dummy IDs (99+).
         """
         pose_path = os.path.join(self.pose_dir, video_key, f"{clip_key}.json")
         refined_path = os.path.join(self.refined_dir, video_key, f"{clip_key}.json")
@@ -109,6 +111,7 @@ class AnnotationManager:
         img_to_frame = {img['id']: img.get('frame_id') for img in data.get('images', [])}
         remap_count = 0
 
+        # 1. Apply the initial remapping based on the mapping file
         for ann in data.get('annotations', []):
             img_id = ann['image_id']
             frame_id = img_to_frame.get(img_id)
@@ -132,10 +135,106 @@ class AnnotationManager:
                             break # Found mapping for this annotation
                     break
 
+        # Helper functions for centroid distance calculations
+        def get_centroid(bbox):
+            x, y, w, h = bbox
+            return (x + w / 2.0, y + h / 2.0)
+
+        def get_dist(bbox1, bbox2):
+            c1 = get_centroid(bbox1)
+            c2 = get_centroid(bbox2)
+            return ((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2)**0.5
+
+        # 2. Resolve ID Collisions chronologically frame by frame
+        images_sorted = sorted(data.get('images', []), key=lambda img: img.get('frame_id', 0))
+        
+        # Group annotations by image_id
+        img_anns = {}
+        for ann in data.get('annotations', []):
+            img_id = ann['image_id']
+            if img_id not in img_anns:
+                img_anns[img_id] = []
+            img_anns[img_id].append(ann)
+
+        last_frame_bbox = {} # Maps track_id -> bbox of the resolved pig in the previous frame
+        dummy_id_counter = 99
+        collision_count = 0
+
+        for img_entry in images_sorted:
+            img_id = img_entry['id']
+            frame_id = img_entry.get('frame_id', 0)
+            anns = img_anns.get(img_id, [])
+            
+            # Count track_id occurrences in this frame
+            track_counts = {}
+            for ann in anns:
+                tid = ann.get('track_id')
+                if tid is not None:
+                    track_counts[tid] = track_counts.get(tid, 0) + 1
+
+            # Find duplicated track_ids
+            duplicated_ids = {tid for tid, count in track_counts.items() if count > 1}
+
+            # Map to keep track of resolved bboxes for the current frame
+            current_frame_bboxes = {}
+
+            for ann in anns:
+                tid = ann.get('track_id')
+                if tid is None:
+                    continue
+
+                if tid not in duplicated_ids:
+                    # No duplicate, keep as is
+                    current_frame_bboxes[tid] = ann['bbox']
+                else:
+                    # Collision detected! Collect all candidates for this ID
+                    candidates = [a for a in anns if a.get('track_id') == tid]
+                    
+                    # We only process this collision once when we visit the first candidate
+                    if ann != candidates[0]:
+                        continue
+                        
+                    # Find which candidate is most consistent with the history
+                    best_candidate_idx = 0
+                    if tid in last_frame_bbox and last_frame_bbox[tid] is not None:
+                        # Find closest candidate based on centroid distance
+                        best_dist = float('inf')
+                        for idx, cand in enumerate(candidates):
+                            dist = get_dist(cand['bbox'], last_frame_bbox[tid])
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_candidate_idx = idx
+                    else:
+                        # Fallback: keep the candidate with the largest bbox area
+                        max_area = -1
+                        for idx, cand in enumerate(candidates):
+                            cand_area = cand['bbox'][2] * cand['bbox'][3]
+                            if cand_area > max_area:
+                                max_area = cand_area
+                                best_candidate_idx = idx
+
+                    # Reassign duplicates to dummy IDs (99, 100, ...)
+                    for idx, cand in enumerate(candidates):
+                        if idx != best_candidate_idx:
+                            old_id = cand['track_id']
+                            cand['track_id'] = dummy_id_counter
+                            print(f"    [Collision Resolved] Frame {frame_id}: Resolved duplicate ID {old_id}. Reassigned duplicate to dummy ID {dummy_id_counter}")
+                            dummy_id_counter += 1
+                            collision_count += 1
+                            remap_count += 1 # Mark as modified
+                        else:
+                            current_frame_bboxes[tid] = cand['bbox']
+
+            # Update history for next frame
+            last_frame_bbox = current_frame_bboxes
+
         if remap_count > 0:
             with open(refined_path, 'w') as f:
                 json.dump(data, f, indent=4)
-            print(f"  ✓ Updated {remap_count} annotations in {video_key}/{clip_key}")
+            if collision_count > 0:
+                print(f"  ✓ Updated {remap_count} annotations in {video_key}/{clip_key} (Resolved {collision_count} collisions)")
+            else:
+                print(f"  ✓ Updated {remap_count} annotations in {video_key}/{clip_key}")
             return True
         else:
             print(f"  --- No changes needed in {video_key}/{clip_key}")

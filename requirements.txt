@@ -1,6 +1,7 @@
 PyYAML
+numpy<2
 moviepy
-opencv-python<4.11
+opencv-python-headless<4.11
 psutil
 pandas
 -e ./sam3[notebooks]
