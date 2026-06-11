@@ -74,37 +74,40 @@ cd ..
 Use the `utils/video-splitter.py` script to batch-process raw videos into shorter segments for easier analysis.
 
 ```bash
-python utils/video-splitter.py
+python utils/video-splitter.py [--resume | --skip-existing]
 ```
 
 **How it works:**
 - **Input**: Reads `.mp4` files from the directory defined in `videos_folder` (default: `data/videos/raw`).
 - **Processing**: Splits each video into segments based on `clip_duration_minutes` in `config.yaml`.
 - **Output**: Creates a subfolder for each original video in `clips_folder` (default: `data/videos/clips`) containing the numbered clips (e.g., `01.mp4`).
+- **Checkpoint**: If you pass the `--resume` (or `--skip-existing`) flag, it will skip processing any videos that already have output clips in the clips folder.
 
 ### Step 2: Extract Frames from Clips
 Use the `utils/clip-splitter.py` script to extract individual frames from the previously generated clips.
 
 ```bash
-python utils/clip-splitter.py
+python utils/clip-splitter.py [--resume | --skip-existing]
 ```
 
 **How it works:**
 - **Input**: Processes all `.mp4` clips found in `clips_folder` (default: `data/videos/clips`).
 - **Processing**: Extracts frames at a rate specified by `frames_per_second` in `config.yaml`.
 - **Output**: Generates images in `frames_folder` (default: `data/images/frames`), maintaining a folder structure that matches the video and clip names (e.g., `data/images/frames/Video_01/01/00000.png`).
+- **Checkpoint**: If you pass the `--resume` (or `--skip-existing`) flag, it will skip extracting any clips that already have extracted frame images.
 
 ### Step 3: Apply Mask to Frames
 Use the `utils/apply_mask.py` script to apply a static mask to all extracted frames. This is useful for obscuring areas of the video that are not relevant to the monitoring task.
 
 ```bash
-python utils/apply_mask.py --mask data/images/mask.png --input data/images/frames --output data/images/frames_masked
+python utils/apply_mask.py --mask data/images/mask.png --input data/images/frames --output data/images/frames_masked [--resume]
 ```
 
 **How it works:**
 - **Input**: Processes all images found in the `--input` directory (default: `data/images/frames`).
 - **Processing**: Applies the bitwise AND operation between the frame and the `--mask` PNG file. Areas that are black in the mask will become black in the output frames.
 - **Output**: Generates masked images in the `--output` directory (default: `data/images/frames_masked`), maintaining the original subfolder structure.
+- **Checkpoint**: If you pass the `--resume` flag, it will skip processing any frames that already have a masked output.
 
 ### Step 4: Batch Annotation Generation (BBoxes & Tracking)
 Use the `tools/gen_anns_videos.py` script to automatically detect and track pigs using SAM 3. This will generate the initial bounding boxes and segmentation masks.
@@ -143,10 +146,22 @@ Copies the pose annotations (BBoxes + Masks + Keypoints) to the refined folder.
 python utils/annotation_manager.py init
 ```
 
+**1.5. Generate Remapping Configuration Automatically (Recommended)**
+To avoid manual mapping, you can automatically calculate the optimal ID matching between consecutive clips using the Hungarian Algorithm based on boundary frame locations.
+```bash
+python utils/auto_id_mapper.py --video June_23_01 --n-frames 5 --decay-factor 0.2
+```
+**How it works:**
+- **Hungarian Algorithm**: Solves the optimal bipartite assignment between canonical pig IDs and tracker IDs.
+- **Track Persistence Filter**: Filters out transient tracker IDs (controlled by `--min-occupancy`, default `0.15`).
+- **Decay Factor (`--decay-factor`)**: Weights boundary frames exponentially. A value of `0.0` uses only the split boundary frames, while `1.0` averages all `N` boundary frames equally.
+- **Output**: Saves the mapping directly to a video-specific file: `data/annotations/remappings/{video}.json`.
+
 **2. Apply Global ID Remapping**
 Use the mapping configuration to ensure IDs are consistent throughout the entire dataset. This will **reset** the target clips from the `pose` original before applying the map.
 ```bash
-python utils/annotation_manager.py remap --map data/anns-remap.json
+# Apply mapping using the generated automatic mapping file
+python utils/annotation_manager.py remap --map data/annotations/remappings/June_23_01.json
 ```
 
 **3. Remove Problematic Clips**
@@ -274,12 +289,12 @@ You can verify the quality of the annotations (both SAM masks and Pose keypoints
 
 #### 1. Visualize SAM Masks (Segmentation)
 ```bash
-python utils/viz_utils.py --video 1 --clip 01 --frame 100 --output segment_vis.png
+python utils/viz_utils.py --video video1 --clip 01 --frame 100 --output segment_vis.png
 ```
 
 #### 2. Visualize Pose Keypoints (Skeleton)
 ```bash
-python utils/viz_utils.py --video 1 --clip 01 --frame 100 --pose --output pose_vis.png
+python utils/viz_utils.py --video video1 --clip 01 --frame 100 --pose --output pose_vis.png
 ```
 
 **Arguments:**
@@ -314,16 +329,17 @@ python utils/video_generator.py --all --pose
 ```bash
 python utils/video_generator.py --all --refined
 ```
-- **Output**: `out/videos/refined/videoX/{clip_id}.mp4`
+- **Output**: `out/videos/refined/{video}/{clip_id}.mp4`
 
 **Arguments:**
 - `--all`: Process all available clips. Automatically skips existing output files (resume).
-- `--video` & `--clip`: Target a specific clip instead of all.
+- `--video`: Target a specific video by name (e.g., `June_23_01`) or by number (e.g., `1` maps to `video1`). If `--clip` is omitted, it will process all clips for this video.
+- `--clip`: Target a specific clip of the selected video (e.g., `01` or `1` maps to `01`).
 - `--pose`: Use pose annotations.
 - `--sam`: Use SAM annotations.
 - `--refined`: Use refined annotations (from `data/annotations/refined`).
 - `--fps`: Output frames per second (default: 1).
-- `--output`: Custom output path (only for single clip mode).
+- `--output`: Custom output path (only when rendering a single clip).
 
 #### 4. ID Mapping Configuration
 To maintain consistency, use the following unique IDs based on ear tags:

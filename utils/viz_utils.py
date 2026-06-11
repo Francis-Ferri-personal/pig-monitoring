@@ -5,12 +5,12 @@ import numpy as np
 from PIL import Image
 from pycocotools import mask as mask_utils
 
-def visualize_coco_frame(video_id, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None, show_pose=False):
+def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None, show_pose=False):
     """
     Visualizes a specific frame from a clip using its COCO annotations. 
     Optimized version using OpenCV for significantly faster rendering.
     """
-    video_dir = f"video{video_id}"
+    video_dir = video_name
     json_path = os.path.join(annotations_dir, video_dir, f"{clip_id}.json")
     if not os.path.exists(json_path):
         print(f"Error: Annotation file not found at {json_path}")
@@ -123,7 +123,7 @@ def visualize_coco_frame(video_id, clip_id, frame_id, annotations_dir="data/anno
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Visualize COCO annotations (SAM or Pose) for a specific video frame.")
-    parser.add_argument("--video", type=int, default=1, help="Video ID (default: 1)")
+    parser.add_argument("--video", type=str, default=1, help="Video Name (e.g 'June_26_08')")
     parser.add_argument("--clip", type=str, required=True, help="Clip ID (e.g., '1' or '01')")
     parser.add_argument("--frame", type=int, required=True, help="Frame index")
     parser.add_argument("--pose", action="store_true", help="Visualize Pose annotations (uses data/annotations/pose)")
@@ -147,7 +147,7 @@ if __name__ == "__main__":
         clip_id = f"{int(clip_id):02d}"
         
     res = visualize_coco_frame(
-        video_id=args.video,
+        video_name=args.video,
         clip_id=clip_id, 
         frame_id=args.frame, 
         annotations_dir=final_ann_dir, 

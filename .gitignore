@@ -14,3 +14,4 @@ data/features
 pig-actions.xlsx
 visual_features
 data/features_kp
+.env.dev

@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--mask", type=str, required=True, help="Path to mask PNG")
     parser.add_argument("--input", type=str, required=True, help="Input directory containing frames")
     parser.add_argument("--output", type=str, required=True, help="Output directory for masked frames")
+    parser.add_argument("--resume", action='store_true', help="Skip files that already exist in output directory")
     args = parser.parse_args()
 
     mask_path = Path(args.mask)
@@ -73,6 +74,8 @@ def main():
 
     print(f"Found {len(tasks)} images. Applying mask...")
     for frame_path, out_path in tqdm(tasks):
+        if args.resume and os.path.exists(out_path):
+            continue  # Skip if output already exists and resume is enabled
         apply_mask(frame_path, mask, out_path)
 
     print(f"Done! Results saved in {output_dir}")

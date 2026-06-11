@@ -1,13 +1,24 @@
+import argparse
 import os
 import yaml
 from moviepy import VideoFileClip
 
 def split_videos():
-    # 1. Determine root directory
+    # 1. Parse arguments
+    parser = argparse.ArgumentParser(description="Split raw videos into shorter clips.")
+    parser.add_argument(
+        "--resume", "--skip-existing",
+        dest="resume",
+        action="store_true",
+        help="Skip videos that have already been split (output directory exists and contains mp4 clips)."
+    )
+    args = parser.parse_args()
+
+    # 2. Determine root directory
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(utils_dir)
     
-    # 2. Load the YAML config
+    # 3. Load the YAML config
     config_path = os.path.join(root_dir, "config.yaml")
     
     try:
@@ -17,7 +28,7 @@ def split_videos():
         print(f"Error: Configuration file not found at {config_path}")
         return
 
-    # 3. Setup Paths
+    # 4. Setup Paths
     input_dir = os.path.join(root_dir, config['videos_folder'])
     output_base_dir = os.path.join(root_dir, config['clips_folder'])
     clip_len = config['clip_duration_minutes'] * 60
@@ -25,7 +36,7 @@ def split_videos():
     if not os.path.exists(output_base_dir):
         os.makedirs(output_base_dir)
 
-    # 4. Process only .mp4 files
+    # 5. Process only .mp4 files
     video_files = [f for f in os.listdir(input_dir) if f.lower().endswith(".mp4")]
 
     for filename in video_files:
@@ -35,6 +46,11 @@ def split_videos():
         raw_video_name = os.path.splitext(filename)[0]
         video_output_dir = os.path.join(output_base_dir, raw_video_name)
         
+        # Check if we should skip this video
+        if args.resume and os.path.exists(video_output_dir) and any(f.lower().endswith(".mp4") for f in os.listdir(video_output_dir)):
+            print(f"Skipping {filename}: already split (output folder contains .mp4 files)")
+            continue
+
         if not os.path.exists(video_output_dir):
             os.makedirs(video_output_dir)
 

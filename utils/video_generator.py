@@ -9,9 +9,9 @@ import re
 # Import the visualization function
 from viz_utils import visualize_coco_frame
 
-def process_single_clip(video_id, clip_id, ann_dir, frames_root, config, args, mode):
+def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args, mode):
     """Processes a single clip and generates a video (raw or annotated)."""
-    video_dir = f"video{video_id}"
+    video_dir = video_name
     json_path = os.path.join(ann_dir, video_dir, f"{clip_id}.json")
     
     if not os.path.exists(json_path):
@@ -64,7 +64,7 @@ def process_single_clip(video_id, clip_id, ann_dir, frames_root, config, args, m
         else:
             # Call viz_utils to render annotations (SAM or Pose)
             vis_frame = visualize_coco_frame(
-                video_id=video_id,
+                video_name=video_name,
                 clip_id=clip_id,
                 frame_id=frame_idx,
                 annotations_dir=ann_dir,
@@ -74,6 +74,8 @@ def process_single_clip(video_id, clip_id, ann_dir, frames_root, config, args, m
         
         if vis_frame is None:
             continue
+
+        cv2.putText(vis_frame, f"{frame_idx}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
             
         h, w = vis_frame.shape[:2]
         
@@ -91,8 +93,8 @@ def process_single_clip(video_id, clip_id, ann_dir, frames_root, config, args, m
 
 def main():
     parser = argparse.ArgumentParser(description="Generate videos from frames (raw or annotated).")
-    parser.add_argument("--video", type=int, default=None, help="Video ID (e.g., 1 for video1)")
-    parser.add_argument("--clip", type=str, default=None, help="Clip ID (e.g., '01')")
+    parser.add_argument("--video", type=str, default=None, help="Video Name (e.g., 'June_23_01' or '1' which maps to 'video1')")
+    parser.add_argument("--clip", type=str, default=None, help="Clip ID (e.g., '01' or '1' which maps to '01')")
     parser.add_argument("--all", action="store_true", help="Process all available clips")
     parser.add_argument("--pose", action="store_true", help="Use Pose annotations (skeleton)")
     parser.add_argument("--sam", action="store_true", help="Use SAM annotations (masks)")
@@ -137,21 +139,45 @@ def main():
         video_folders = sorted([d for d in os.listdir(ann_dir) if os.path.isdir(os.path.join(ann_dir, d))])
         
         for v_folder in video_folders:
-            match = re.search(r'video(\d+)', v_folder)
-            if not match: continue
-            v_id = int(match.group(1))
-            
             v_path = os.path.join(ann_dir, v_folder)
             clip_files = sorted([f for f in os.listdir(v_path) if f.endswith('.json')])
             
             for c_file in clip_files:
                 c_id = c_file.replace('.json', '')
-                process_single_clip(v_id, c_id, ann_dir, frames_root, config, args, mode)
+                process_single_clip(v_folder, c_id, ann_dir, frames_root, config, args, mode)
     else:
-        if args.video is None or args.clip is None:
-            print("Error: Provide --video and --clip OR use --all")
+        if args.video is None:
+            print("Error: Provide --video or use --all")
             return
-        process_single_clip(args.video, args.clip, ann_dir, frames_root, config, args, mode)
+
+        # Normalize video folder name. If it's a number (e.g. "1"), convert to "video1"
+        video_name = args.video
+        if video_name.isdigit():
+            video_name = f"video{video_name}"
+
+        video_path = os.path.join(ann_dir, video_name)
+        if not os.path.exists(video_path):
+            print(f"Error: Video folder {video_name} not found in {ann_dir}")
+            return
+
+        if args.clip:
+            # Normalize clip ID (e.g., '1' -> '01')
+            clip_id = args.clip
+            if clip_id.isdigit():
+                clip_id = f"{int(clip_id):02d}"
+            
+            process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args, mode)
+        else:
+            # Process all clips for the specified video
+            clip_files = sorted([f for f in os.listdir(video_path) if f.endswith('.json')])
+            if not clip_files:
+                print(f"No clip files found for video {video_name}")
+                return
+            
+            print(f"\n>>> Processing all {len(clip_files)} clips for video {video_name}...")
+            for c_file in clip_files:
+                c_id = c_file.replace('.json', '')
+                process_single_clip(video_name, c_id, ann_dir, frames_root, config, args, mode)
 
     print("\n>>> FINISHED.")
 

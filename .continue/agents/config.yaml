@@ -1,0 +1,19 @@
+name: Local Config
+version: 1.0.0
+schema: v1
+context:
+  - provider: file
+  - provider: code
+  - provider: diff
+  - provider: terminal
+models:
+  - name: Autodetect
+    provider: ollama
+    apiBase: http://server:11434
+    model: AUTODETECT
+    roles:
+      - chat
+      - edit
+      - apply
+      - rerank
+      - autocomplete

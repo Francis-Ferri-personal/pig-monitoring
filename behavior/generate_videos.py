@@ -70,7 +70,7 @@ def _load_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, in
     return model
 
 
-def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> None:
+def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", draw_kp: bool = False) -> None:
     """
     Generate overlay videos for the model using embeddings and behavior annotations.
     """
@@ -88,6 +88,16 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
                 class_names[idx] = name
     else:
         class_names = []
+
+    skeleton = []
+    if draw_kp:
+        pose_yaml = "data/pig_pose.yaml"
+        if os.path.exists(pose_yaml):
+            with open(pose_yaml, "r") as f:
+                pose_data = yaml.safe_load(f)
+                skeleton = pose_data.get("categories", [{}])[0].get("skeleton", [])
+        else:
+            print(f"!!! {pose_yaml} not found. Skipping skeleton.")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = _load_model(exp_dir, video_to_eval, behavior_classes)
@@ -281,6 +291,27 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3") -> 
                     1,
                 )
 
+                # Draw Keypoints and Skeleton if requested
+                if draw_kp:
+                    kp_raw = ann.get("keypoints", [])
+                    if kp_raw and len(kp_raw) >= 51:
+                        kp_array = np.array(kp_raw).reshape(-1, 3)
+                        
+                        # 1. Draw Skeleton Lines
+                        for (p1, p2) in skeleton:
+                            # Skeleton indices in YAML are 1-based
+                            idx1, idx2 = p1 - 1, p2 - 1
+                            if idx1 < len(kp_array) and idx2 < len(kp_array):
+                                k1 = kp_array[idx1]
+                                k2 = kp_array[idx2]
+                                if k1[2] > 0 and k2[2] > 0:
+                                    cv2.line(frame_img, (int(k1[0]), int(k1[1])), (int(k2[0]), int(k2[1])), color, 1)
+
+                        # 2. Draw Individual Points
+                        for kp_idx, (kx, ky, kv) in enumerate(kp_array):
+                            if kv > 0:  # COCO: 0=not in image, 1=hidden, 2=visible
+                                cv2.circle(frame_img, (int(kx), int(ky)), 3, color, -1)
+                
                 # Collect log data
                 inference_logs.append({
                     "video": video_to_eval,
@@ -326,7 +357,8 @@ if __name__ == "__main__":
     parser.add_argument("--exp", type=str, required=True, help="Experiment folder name in out/results/")
     parser.add_argument("--video", type=str, default="video3", help="Video folder to evaluate (default: video3)")
     parser.add_argument("--inference", action="store_true", help="Run in inference mode (look for RAW/SAM annotations)")
+    parser.add_argument("--draw_kp", action="store_true", help="Draw keypoints on the video")
     args = parser.parse_args()
 
-    generate_prediction_videos(args.exp, video_to_eval=args.video)
+    generate_prediction_videos(args.exp, video_to_eval=args.video, draw_kp=args.draw_kp)
 

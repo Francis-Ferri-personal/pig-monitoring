@@ -1,9 +1,20 @@
+import argparse
 import cv2
 import os
 import yaml
 
 def extract_frames():
-    # 1. Setup Paths
+    # 1. Parse arguments
+    parser = argparse.ArgumentParser(description="Extract frames from video clips.")
+    parser.add_argument(
+        "--resume", "--skip-existing",
+        dest="resume",
+        action="store_true",
+        help="Skip clips that have already had frames extracted (output directory contains image files)."
+    )
+    args = parser.parse_args()
+
+    # 2. Setup Paths
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(utils_dir)
     config_path = os.path.join(root_dir, "config.yaml")
@@ -21,7 +32,7 @@ def extract_frames():
     img_ext = config.get('image_extension', 'png')
 
 
-    # 2. Walk through subfolders (Video_A, Video_B, etc.)
+    # 3. Walk through subfolders (Video_A, Video_B, etc.)
     for subdir, dirs, files in sorted(os.walk(clips_root_dir)):
         # Filter only mp4 files
         clip_files = [f for f in files if f.lower().endswith(".mp4")]
@@ -41,6 +52,12 @@ def extract_frames():
             # Create output path: frames_folder / Video_A / clip_01 /
             clip_base_name = os.path.splitext(clip_name)[0]
             clip_output_dir = os.path.join(frames_root_dir, relative_path, clip_base_name)
+            
+            # Check if we should skip this clip
+            if args.resume and os.path.exists(clip_output_dir) and any(f.lower().endswith(f".{img_ext}") for f in os.listdir(clip_output_dir)):
+                print(f"Skipping {relative_path}/{clip_name}: already extracted (output folder contains images)")
+                continue
+
             os.makedirs(clip_output_dir, exist_ok=True)
 
             cap = cv2.VideoCapture(clip_path)

@@ -9,14 +9,25 @@ class AnnotationManager:
         self.refined_dir = refined_dir
 
     def initialize_refined(self):
-        """Copies all files from data/annotations/pose to data/annotations/refined."""
-        if not os.path.exists(self.refined_dir):
-            print(f">>> Initializing refined annotations: {self.pose_dir} -> {self.refined_dir}")
-            os.makedirs(os.path.dirname(self.refined_dir), exist_ok=True)
-            shutil.copytree(self.pose_dir, self.refined_dir)
-            print("✓ Copy completed successfully.")
-        else:
-            print(f"--- The directory {self.refined_dir} already exists. Skipping initialization.")
+        """Copies missing files/folders from data/annotations/pose to data/annotations/refined."""
+        print(f">>> Initializing refined annotations: {self.pose_dir} -> {self.refined_dir}")
+        if not os.path.exists(self.pose_dir):
+            print(f"Error: Source directory {self.pose_dir} does not exist.")
+            return
+
+        os.makedirs(self.refined_dir, exist_ok=True)
+        for item in os.listdir(self.pose_dir):
+            src_item = os.path.join(self.pose_dir, item)
+            dst_item = os.path.join(self.refined_dir, item)
+            if os.path.exists(dst_item):
+                print(f"--- The subfolder/file {item} already exists. Skipping (leaving unmodified).")
+            else:
+                print(f"✓ Copying {item} to {self.refined_dir}...")
+                if os.path.isdir(src_item):
+                    shutil.copytree(src_item, dst_item)
+                else:
+                    shutil.copy2(src_item, dst_item)
+        print("✓ Initialization completed.")
 
     def _ensure_refined_exists(self):
         if not os.path.exists(self.refined_dir):
