@@ -140,10 +140,33 @@ python tools/gen_keypoint_anns.py --device cuda:1 --batch-size 32
 ### Step 6: Refinement Process
 The refinement process ensures that tracks are consistent across clips and erroneous detections are removed. This process operates on the `data/annotations/refined/` directory.
 
+**🚀 Standard Pipeline for New Videos**
+If you are processing a new video (e.g., `June_23_01`), follow these steps in order:
+1. **Initialize**: `python utils/annotation_manager.py init --video June_23_01` (--overwrite)
+2. **Map IDs**: `python utils/auto_id_mapper.py --video June_23_01` (--overwrite)
+3. **Cleanup**: Manually review and use `delete-id` or `delete-frames` commands (see below) to fix any remaining errors.
+4. **Apply Remap**: `python utils/annotation_manager.py remap --map data/annotations/remappings/June_23_01.json`
+5. **Validate**: Generate a video of a specific clip to verify tracking:
+   ```bash
+   python utils/video_generator.py --refined --video June_23_01 --clip 8
+   ```
+**Note**: Use this commands and the overwrite flags to correct the annotations until you see the video completely correct.
+---
+
 **1. Initialize Refined Directory**
 Copies the pose annotations (BBoxes + Masks + Keypoints) to the refined folder.
 ```bash
+# Copy all folders (default)
 python utils/annotation_manager.py init
+
+# Copy only a specific video
+python utils/annotation_manager.py init --video June_23_01
+
+# Copy and overwrite existing refined files
+python utils/annotation_manager.py init --overwrite
+
+# Copy a specific video and overwrite it
+python utils/annotation_manager.py init --video June_23_01 --overwrite
 ```
 
 **1.5. Generate Remapping Configuration Automatically (Recommended)**

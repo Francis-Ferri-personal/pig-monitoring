@@ -158,6 +158,71 @@ def match_pigs_hungarian(prev_averaged_pigs, curr_averaged_pigs, max_distance_th
 
     return mapping
 
+def match_orphan_trackers_to_empty_masters(empty_master_ids, orphan_tracker_bboxes, prev_averaged_pigs, max_distance_threshold=375.0):
+    """
+    Second-pass matching for vacant canonical slots using leftover persistent trackers.
+    Uses a more permissive distance gate than the primary boundary match.
+    """
+    if not empty_master_ids or not orphan_tracker_bboxes:
+        return {}
+
+    master_ids = sorted(empty_master_ids)
+    tracker_ids = sorted(orphan_tracker_bboxes.keys())
+
+    cost_matrix = np.zeros((len(master_ids), len(tracker_ids)))
+    for i, m_id in enumerate(master_ids):
+        prev_bbox = prev_averaged_pigs.get(m_id)
+        for j, t_id in enumerate(tracker_ids):
+            orphan_center = get_centroid(orphan_tracker_bboxes[t_id])
+            if prev_bbox is not None:
+                prev_center = get_centroid(prev_bbox)
+                cost_matrix[i, j] = np.sqrt(
+                    (prev_center[0] - orphan_center[0])**2 + (prev_center[1] - orphan_center[1])**2
+                )
+            else:
+                cost_matrix[i, j] = 0.0
+
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    mapping = {}
+    for r, c in zip(row_ind, col_ind):
+        dist = cost_matrix[r, c]
+        m_id = str(master_ids[r])
+        t_id = str(tracker_ids[c])
+        if prev_averaged_pigs.get(master_ids[r]) is None or dist <= max_distance_threshold:
+            mapping[m_id] = t_id
+            if dist > 0:
+                print(f"    [Fallback Match] canonical ID {m_id} -> tracker ID {t_id} (distance {dist:.1f}px)")
+        else:
+            print(
+                f"    [Fallback Rejected] canonical ID {m_id} -> tracker ID {t_id} "
+                f"rejected (distance {dist:.1f}px > threshold {max_distance_threshold}px)"
+            )
+    return mapping
+
+def apply_fallback_remap(current_remap, prev_averaged_pigs, averaged_curr_pigs, max_dist=250.0):
+    """
+    Fills empty remap slots by matching unused persistent trackers to vacant masters.
+    """
+    used_trackers = {int(v) for v in current_remap.values() if v != ""}
+    empty_masters = [int(k) for k, v in current_remap.items() if v == ""]
+    orphan_trackers = {
+        t_id: bbox for t_id, bbox in averaged_curr_pigs.items()
+        if t_id not in used_trackers
+    }
+
+    if not empty_masters or not orphan_trackers:
+        return current_remap
+
+    fallback = match_orphan_trackers_to_empty_masters(
+        empty_masters,
+        orphan_trackers,
+        prev_averaged_pigs,
+        max_distance_threshold=max_dist * 1.5,
+    )
+    for master_id, tracker_id in fallback.items():
+        current_remap[master_id] = tracker_id
+    return current_remap
+
 def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_frames=5, min_occupancy=0.15, max_dist=250.0, decay_factor=0.3):
     """
     Processes all clips of a video sequentially to match IDs between clip boundaries.
@@ -225,11 +290,16 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
             prev_pigs_matched = {int(m_id): pos for m_id, pos in last_known_pigs.items() if pos is not None}
             
             current_remap = match_pigs_hungarian(prev_pigs_matched, averaged_curr_pigs, max_distance_threshold=max_dist)
-            
+
             # Ensure all canonical IDs 0-4 are keys in the output remap dictionary
             for m_id in range(5):
                 if str(m_id) not in current_remap:
                     current_remap[str(m_id)] = ""
+
+            # Second pass: pair leftover persistent trackers with empty master slots
+            current_remap = apply_fallback_remap(
+                current_remap, prev_pigs_matched, averaged_curr_pigs, max_dist=max_dist
+            )
 
             print(f"  Clip {clip_name}: Matched using Hungarian Algorithm. Map: {current_remap}")
 
@@ -239,11 +309,29 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
         # Store positions using canonical master IDs (remapping current tracker IDs to master IDs)
         last_known_pigs = {str(m_id): None for m_id in range(5)}
         inverse_remap = {int(v): int(k) for k, v in current_remap.items() if v != ""}
-        
+
         for tracker_id, avg_bbox in averaged_last_pigs.items():
             if tracker_id in inverse_remap:
                 master_id = str(inverse_remap[tracker_id])
                 last_known_pigs[master_id] = avg_bbox
+
+        # Propagate positions of unmapped surplus trackers to still-empty master slots
+        used_trackers = {int(v) for v in current_remap.values() if v != ""}
+        empty_masters = [int(k) for k, v in current_remap.items() if v == ""]
+        surplus_trackers = {
+            t_id: bbox for t_id, bbox in averaged_last_pigs.items()
+            if t_id not in used_trackers
+        }
+        if empty_masters and surplus_trackers:
+            prev_for_fallback = {int(k): v for k, v in last_known_pigs.items() if v is not None}
+            fallback_positions = match_orphan_trackers_to_empty_masters(
+                empty_masters,
+                surplus_trackers,
+                prev_for_fallback,
+                max_distance_threshold=max_dist * 1.5,
+            )
+            for master_id, tracker_id in fallback_positions.items():
+                last_known_pigs[master_id] = averaged_last_pigs[int(tracker_id)]
 
         clips_mapping.append({
             "clip": clip_name,
@@ -281,6 +369,7 @@ def main():
     parser.add_argument("--min-occupancy", type=float, default=0.15, help="Minimum frame occupancy ratio to consider a track valid (filters false positives)")
     parser.add_argument("--max-dist", type=float, default=250.0, help="Maximum allowed centroid distance in pixels for a valid boundary match")
     parser.add_argument("--decay-factor", type=float, default=0.3, help="Exponential decay factor (0.0 to 1.0). 0.0 uses only the boundary frame, 1.0 averages equally.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing mapping file if it exists")
 
     args = parser.parse_args()
 
@@ -289,6 +378,10 @@ def main():
         output_path = os.path.join("data/annotations/remappings", f"{args.video}.json")
     else:
         output_path = args.output_map
+
+    if os.path.exists(output_path) and not args.overwrite:
+        print(f"\n(!) Mapping file already exists at {output_path}. Use --overwrite to regenerate it.")
+        return
 
     video_mapping = generate_video_mapping(
         args.video, 
