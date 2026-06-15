@@ -226,11 +226,23 @@ def apply_fallback_remap(current_remap, prev_averaged_pigs, averaged_curr_pigs, 
 def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_frames=5, min_occupancy=0.15, max_dist=250.0, decay_factor=0.3):
     """
     Processes all clips of a video sequentially to match IDs between clip boundaries.
+    Now supports manual overrides from manual_fixes.json to ensure sequential consistency.
     """
     video_path = os.path.join(source_ann_dir, video_dir)
     if not os.path.exists(video_path):
         print(f"Error: Video path {video_path} does not exist.")
         return None
+
+    # Load manual fixes from a video-specific file: data/annotations/remappings/{video}_fixes.json
+    manual_fixes = {}
+    fixes_path = os.path.join("data/annotations/remappings", f"{video_dir}_fixes.json")
+    if os.path.exists(fixes_path):
+        try:
+            with open(fixes_path, 'r') as f:
+                manual_fixes = json.load(f)
+                print(f"  [!] Found manual fixes in {fixes_path}")
+        except Exception as e:
+            print(f"Warning: Could not load {fixes_path}: {e}")
 
     clip_files = sorted(glob(os.path.join(video_path, "*.json")))
     if not clip_files:
@@ -266,49 +278,69 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
         # 1. Identify persistent tracks within this clip
         persistent_tracks = get_persistent_tracks(annotations, sorted_img_ids, min_occupancy_ratio=min_occupancy)
         print(f"  Clip {clip_name}: Found {len(persistent_tracks)} persistent tracks out of {len(set(ann['track_id'] for ann in annotations))} total track IDs.")
-
+        
         current_remap = {}
 
-        if idx == 0:
-            # First clip initialization: Map existing persistent tracker IDs directly to canonical IDs 0-4
-            print(f"  Clip {clip_name} (First clip): Initializing canonical IDs from persistent tracks.")
-            averaged_first_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
-            tracker_ids_found = sorted(list(averaged_first_pigs.keys()))
-            
-            for m_id, t_id in enumerate(tracker_ids_found[:5]):
-                current_remap[str(m_id)] = str(t_id)
-            
-            # Pad missing canonical IDs
-            for m_id in range(5):
-                if str(m_id) not in current_remap:
-                    current_remap[str(m_id)] = ""
+        # --- CHECK FOR MANUAL FIXES ---
+        if clip_name in manual_fixes:
+            print(f"  [!] Applying manual fix for clip {clip_name}...")
+            # Manual fixes can be a single remap or a list of ranged remaps
+            fix_data = manual_fixes[clip_name]
+            if isinstance(fix_data, list):
+                # For the purpose of the mapper's sequential anchor logic, 
+                # we use the LAST range of the manual fix as the anchor for the next clip.
+                # But we record the whole list in the final mapping.
+                current_remap_list = fix_data
+                # Use the last range for anchor calculation
+                last_fix = fix_data[-1]
+                current_remap = last_fix.get('remap', {})
+            else:
+                current_remap = fix_data
+                current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
         else:
-            # Subsequent clips: Match first N frames of current clip against last N frames of previous clip
-            averaged_curr_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
-            
-            # Map canonical master IDs to their averaged positions from previous clip
-            prev_pigs_matched = {int(m_id): pos for m_id, pos in last_known_pigs.items() if pos is not None}
-            
-            current_remap = match_pigs_hungarian(prev_pigs_matched, averaged_curr_pigs, max_distance_threshold=max_dist)
-
-            # Ensure all canonical IDs 0-4 are keys in the output remap dictionary
-            for m_id in range(5):
-                if str(m_id) not in current_remap:
-                    current_remap[str(m_id)] = ""
-
-            # Second pass: pair leftover persistent trackers with empty master slots
-            current_remap = apply_fallback_remap(
-                current_remap, prev_pigs_matched, averaged_curr_pigs, max_dist=max_dist
-            )
-
-            print(f"  Clip {clip_name}: Matched using Hungarian Algorithm. Map: {current_remap}")
+            if idx == 0:
+                # First clip initialization
+                print(f"  Clip {clip_name} (First clip): Initializing canonical IDs from persistent tracks.")
+                averaged_first_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
+                tracker_ids_found = sorted(list(averaged_first_pigs.keys()))
+                
+                for m_id, t_id in enumerate(tracker_ids_found[:5]):
+                    current_remap[str(m_id)] = str(t_id)
+                
+                for m_id in range(5):
+                    if str(m_id) not in current_remap:
+                        current_remap[str(m_id)] = ""
+                
+                current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
+            else:
+                # Subsequent clips: Match first N frames of current clip against last N frames of previous clip
+                averaged_curr_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
+                
+                prev_pigs_matched = {int(m_id): pos for m_id, pos in last_known_pigs.items() if pos is not None}
+                
+                current_remap = match_pigs_hungarian(prev_pigs_matched, averaged_curr_pigs, max_distance_threshold=max_dist)
+                
+                for m_id in range(5):
+                    if str(m_id) not in current_remap:
+                        current_remap[str(m_id)] = ""
+                
+                current_remap = apply_fallback_remap(
+                    current_remap, prev_pigs_matched, averaged_curr_pigs, max_dist=max_dist
+                )
+                
+                print(f"  Clip {clip_name}: Matched using Hungarian Algorithm. Map: {current_remap}")
+                current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
 
         # Compute average positions of persistent pigs in the last N frames of this clip
         averaged_last_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=False, decay_factor=decay_factor)
 
         # Store positions using canonical master IDs (remapping current tracker IDs to master IDs)
         last_known_pigs = {str(m_id): None for m_id in range(5)}
-        inverse_remap = {int(v): int(k) for k, v in current_remap.items() if v != ""}
+        
+        # We use the laest available mapping for this clip to anchor the next one
+        # If it was a manual fix with multiple ranges, we use the last one.
+        effective_remap = current_remap if not isinstance(current_remap, list) else current_remap[-1].get('remap', {})
+        inverse_remap = {int(v): int(k) for k, v in effective_remap.items() if v != ""}
 
         for tracker_id, avg_bbox in averaged_last_pigs.items():
             if tracker_id in inverse_remap:
@@ -316,8 +348,8 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
                 last_known_pigs[master_id] = avg_bbox
 
         # Propagate positions of unmapped surplus trackers to still-empty master slots
-        used_trackers = {int(v) for v in current_remap.values() if v != ""}
-        empty_masters = [int(k) for k, v in current_remap.items() if v == ""]
+        used_trackers = {int(v) for v in effective_remap.values() if v != ""}
+        empty_masters = [int(k) for k, v in effective_remap.items() if v == ""]
         surplus_trackers = {
             t_id: bbox for t_id, bbox in averaged_last_pigs.items()
             if t_id not in used_trackers
@@ -335,13 +367,7 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
 
         clips_mapping.append({
             "clip": clip_name,
-            "remaps": [
-                {
-                    "frame_start": int(first_frame_id),
-                    "frame_end": int(last_frame_id),
-                    "remap": current_remap
-                }
-            ]
+            "remaps": current_remap_list
         })
 
     return {
@@ -362,7 +388,8 @@ def save_video_mapping(new_video_mapping, mapping_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Auto match pig tracking IDs between consecutive video clips.")
-    parser.add_argument("--video", required=True, help="Name of the video directory (e.g., June_23_01)")
+    parser.add_argument("--video", help="Name of the video directory (e.g., June_23_01)")
+    parser.add_argument("--all", action="store_true", help="Process all videos in the source directory")
     parser.add_argument("--source-dir", default="data/annotations/sam", help="Source annotation directory")
     parser.add_argument("--output-map", default=None, help="Path to save mapping JSON. Defaults to data/annotations/remappings/{video}.json")
     parser.add_argument("--n-frames", type=int, default=5, help="Number of frames to average at clip boundaries")
@@ -373,27 +400,42 @@ def main():
 
     args = parser.parse_args()
 
-    # Determine default output path if not provided
-    if args.output_map is None:
-        output_path = os.path.join("data/annotations/remappings", f"{args.video}.json")
-    else:
-        output_path = args.output_map
+    if not args.video and not args.all:
+        parser.error("The argument --video or --all is required.")
 
-    if os.path.exists(output_path) and not args.overwrite:
-        print(f"\n(!) Mapping file already exists at {output_path}. Use --overwrite to regenerate it.")
-        return
+    videos_to_process = []
+    if args.all:
+        if not os.path.exists(args.source_dir):
+            print(f"Error: Source directory {args.source_dir} does not exist.")
+            return
+        videos_to_process = [d for d in os.listdir(args.source_dir) if os.path.isdir(os.path.join(args.source_dir, d))]
+        print(f"Found {len(videos_to_process)} videos to process in {args.source_dir}")
+    elif args.video:
+        videos_to_process = [args.video]
 
-    video_mapping = generate_video_mapping(
-        args.video, 
-        source_ann_dir=args.source_dir, 
-        n_frames=args.n_frames,
-        min_occupancy=args.min_occupancy,
-        max_dist=args.max_dist,
-        decay_factor=args.decay_factor
-    )
-    
-    if video_mapping:
-        save_video_mapping(video_mapping, mapping_path=output_path)
+    for video in videos_to_process:
+        # Determine output path
+        if args.output_map is not None:
+            # If a specific output map is provided, it only makes sense for a single video
+            output_path = args.output_map
+        else:
+            output_path = os.path.join("data/annotations/remappings", f"{video}.json")
+
+        if os.path.exists(output_path) and not args.overwrite:
+            print(f"\n(!) Mapping file already exists at {output_path}. Skipping. Use --overwrite to regenerate.")
+            continue
+
+        video_mapping = generate_video_mapping(
+            video, 
+            source_ann_dir=args.source_dir, 
+            n_frames=args.n_frames,
+            min_occupancy=args.min_occupancy,
+            max_dist=args.max_dist,
+            decay_factor=args.decay_factor
+        )
+        
+        if video_mapping:
+            save_video_mapping(video_mapping, mapping_path=output_path)
 
 if __name__ == "__main__":
     main()

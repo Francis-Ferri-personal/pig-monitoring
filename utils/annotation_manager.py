@@ -461,7 +461,7 @@ class AnnotationManager:
 
     def remap_all(self, mapping_file):
         self._ensure_refined_exists()
-        print(f">>> Starting batch remapping (Master <- Tracker)...")
+        print(f">>> Starting batch remapping from file: {mapping_file}")
         with open(mapping_file, 'r') as f:
             full_mapping = json.load(f)
         total_clips = 0
@@ -472,7 +472,45 @@ class AnnotationManager:
                 total_clips += 1
                 if self.apply_remap(v_key, c_entry.get('clip'), c_entry.get('remaps', [])):
                     updated_clips += 1
-        print(f"\n>>> FINISHED. Processed {total_clips} clips.")
+        print(f"✓ Processed {total_clips} clips ({updated_clips} updated) from {os.path.basename(mapping_file)}")
+
+    def remap_all(self, mapping_file):
+        self._ensure_refined_exists()
+        print(f">>> Starting batch remapping from file: {mapping_file}")
+        with open(mapping_file, 'r') as f:
+            full_mapping = json.load(f)
+        total_clips = 0
+        updated_clips = 0
+        for v_entry in full_mapping:
+            v_key = v_entry.get('video')
+            for c_entry in v_entry.get('clips', []):
+                total_clips += 1
+                if self.apply_remap(v_key, c_entry.get('clip'), c_entry.get('remaps', [])):
+                    updated_clips += 1
+        print(f"✓ Processed {total_clips} clips ({updated_clips} updated) from {os.path.basename(mapping_file)}")
+
+    def remap_all_files(self, remappings_dir="data/annotations/remappings"):
+        """
+        Scans the remappings directory and applies all found .json mapping files.
+        """
+        self._ensure_refined_exists()
+        print(f">>> Starting batch remapping from all files in {remappings_dir}...")
+        
+        import glob
+        mapping_files = sorted(glob.glob(os.path.join(remappings_dir, "*.json")))
+        # Filter out manual fix files
+        mapping_files = [f for f in mapping_files if not f.endswith("_fixes.json")]
+        
+        if not mapping_files:
+            print(f"No mapping files found in {remappings_dir}")
+            return
+
+        total_videos_processed = 0
+        for map_file in mapping_files:
+            self.remap_all(map_file)
+            total_videos_processed += 1
+            
+        print(f"\n>>> FINISHED. Processed {total_videos_processed} mapping files.")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -488,7 +526,8 @@ def main():
     remap_p = subparsers.add_parser("remap")
     remap_p.add_argument("--video")
     remap_p.add_argument("--clip")
-    remap_p.add_argument("--map", required=True)
+    remap_p.add_argument("--map")
+    remap_p.add_argument("--all", action="store_true", help="Remap all videos using all mapping files in data/annotations/remappings/")
     
     del_f = subparsers.add_parser("delete-frames")
     del_f.add_argument("--video", required=True)
@@ -502,7 +541,12 @@ def main():
     elif args.command == "delete-id": manager.delete_id(args.video, args.clip, args.id)
     elif args.command == "delete-frames": manager.delete_frames(args.video, args.clip, args.start, args.end)
     elif args.command == "remap":
-        if args.video and args.clip: manager.remap_ids(args.video, args.clip, args.map)
-        else: manager.remap_all(args.map)
+        if args.all:
+            manager.remap_all_files()
+        elif args.map:
+            if args.video and args.clip: manager.remap_ids(args.video, args.clip, args.map)
+            else: manager.remap_all(args.map)
+        else:
+            print("Error: The 'remap' command requires either --all or --map.")
 if __name__ == "__main__":
     main()

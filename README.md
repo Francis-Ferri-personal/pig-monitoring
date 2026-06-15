@@ -142,15 +142,60 @@ The refinement process ensures that tracks are consistent across clips and erron
 
 **🚀 Standard Pipeline for New Videos**
 If you are processing a new video (e.g., `June_23_01`), follow these steps in order:
-1. **Initialize**: `python utils/annotation_manager.py init --video June_23_01` (--overwrite)
-2. **Map IDs**: `python utils/auto_id_mapper.py --video June_23_01` (--overwrite)
-3. **Cleanup**: Manually review and use `delete-id` or `delete-frames` commands (see below) to fix any remaining errors.
-4. **Apply Remap**: `python utils/annotation_manager.py remap --map data/annotations/remappings/June_23_01.json`
-5. **Validate**: Generate a video of a specific clip to verify tracking:
+
+1. **Initialize**: Copy pose annotations to the refined folder.
    ```bash
-   python utils/video_generator.py --refined --video June_23_01 --clip 8
+   python utils/annotation_manager.py init --video June_23_01 --overwrite
    ```
-**Note**: Use this commands and the overwrite flags to correct the annotations until you see the video completely correct.
+2. **Manual Overrides (Optional)**: If you know specific clips have tracking errors, create a fix file at `data/annotations/remappings/June_23_01_fixes.json` (see **Manual Fixes Format** below) or use the manager tool:
+   ```bash
+   python utils/manual_fix_manager.py add --video June_23_01 --clip 08 --start 0 --end 96 --remap '{"0": "3", "1": "4"}'
+   ```
+3. **Map IDs**: Generate the global mapping. The mapper automatically detects `{video}_fixes.json` and uses those overrides as anchors for subsequent clips to ensure sequential consistency.
+   ```bash
+   python utils/auto_id_mapper.py --video June_23_01 --overwrite
+   ```
+4. **Apply Remap**: Apply the generated mapping to the refined dataset.
+   ```bash
+   python utils/annotation_manager.py remap --map data/annotations/remappings/June_23_01.json
+   ```
+5. **Validate**: Generate videos to verify the result.
+   ```bash
+   python utils/video_generator.py --refined --video June_23_01
+   ```
+   *If errors persist, repeat from step 2 by adding more manual fixes.*
+
+---
+
+**Manual Fixes Format**
+To override the automatic mapper, create a file at `data/annotations/remappings/{video}_fixes.json`. 
+
+**Option A: Single mapping for the whole clip**
+```json
+{
+    "05": { "0": "3", "1": "4" }
+}
+```
+
+**Option B: Range-based mappings (for ID switches within a clip)**
+```json
+{
+    "08": [
+        {
+            "frame_start": 0,
+            "frame_end": 96,
+            "remap": { "0": "3", "1": "4" }
+        },
+        {
+            "frame_start": 97,
+            "frame_end": 179,
+            "remap": { "0": "1", "1": "2" }
+        }
+    ]
+}
+```
+*Note: The mapper uses the **last range** of a clip as the anchor for the next clip's matching process.*
+
 ---
 
 **1. Initialize Refined Directory**
