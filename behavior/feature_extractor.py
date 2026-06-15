@@ -1,7 +1,8 @@
 import json
 import os
+import argparse
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -204,6 +205,10 @@ def extract_features(
     bbox_padding_factor: float = 1.1,
     batch_size: int = 16,
     use_keypoints: bool = False,
+    only_keypoints: bool = False,
+    overwrite: bool = False,
+    target_video: Optional[str] = None,
+    target_clip: Optional[str] = None,
 ) -> None:
     """
     Extract embeddings + bbox geometry + motion features from behavior-labeled COCO JSONs.
@@ -217,8 +222,13 @@ def extract_features(
     print(f">>> Starting feature extraction from {src_dir}...")
     os.makedirs(dst_dir, exist_ok=True)
 
-    backbone, device, feat_dim = load_cnn_device(cnn_name)
-    transform = get_image_transform(image_size=image_size)
+    # If only_keypoints is True, we don't need to load the CNN
+    backbone = None
+    device = None
+    feat_dim = None
+    if not only_keypoints:
+        backbone, device, feat_dim = load_cnn_device(cnn_name)
+        transform = get_image_transform(image_size=image_size)
 
     src_dir_path = Path(src_dir)
     frames_root_path = Path(frames_root)
@@ -227,7 +237,11 @@ def extract_features(
     total_tracks = 0
 
     # Iterate through videos (e.g. video1, video2, video3)
-    for video_name in sorted(os.listdir(src_dir)):
+    video_list = sorted(os.listdir(src_dir))
+    if target_video:
+        video_list = [v for v in video_list if v == target_video]
+
+    for video_name in video_list:
         src_video_path = src_dir_path / video_name
         if not src_video_path.is_dir():
             continue
@@ -238,9 +252,12 @@ def extract_features(
         # Precompute global frame offset per clip (same order as sorted json_file)
         clip_offsets: Dict[str, int] = {}
         running_offset = 0
-        for jf in sorted(os.listdir(src_video_path)):
-            if not jf.endswith(".json"):
-                continue
+        
+        json_files = sorted([jf for jf in os.listdir(src_video_path) if jf.endswith(".json")])
+        if target_clip:
+            json_files = [jf for jf in json_files if jf.replace(".json", "") == target_clip]
+
+        for jf in json_files:
             with open(src_video_path / jf, "r") as f:
                 d = json.load(f)
             n_frames = len(d.get("images", []))
@@ -250,10 +267,7 @@ def extract_features(
         # First pass: gather per-track sequences (bbox + label + img_meta + global_frame_id)
         tracks_data: Dict[int, List[Dict]] = {}
 
-        for json_file in sorted(os.listdir(src_video_path)):
-            if not json_file.endswith(".json"):
-                continue
-
+        for json_file in json_files:
             clip_id = json_file.replace(".json", "")
             json_path = src_video_path / json_file
             with open(json_path, "r") as f:
@@ -312,7 +326,7 @@ def extract_features(
         print(f"    Found {len(track_ids)} valid tracks in {video_name}")
         for idx, tid in enumerate(track_ids, start=1):
             save_path = video_dst / f"track_{tid}.npz"
-            if save_path.exists():
+            if save_path.exists() and not overwrite:
                 # Resume: skip tracks already processed
                 continue
 
@@ -338,21 +352,6 @@ def extract_features(
                 img_w, img_h = inst["img_size"]
                 file_name = inst["file_name"]
 
-                # Resolve image path robustly. annotations may store file_name as
-                # "clip/frame.png" or just "frame.png". Try several sensible
-                # locations before skipping.
-                img_path = frames_root_path / video_name / file_name
-                if not img_path.exists():
-                    img_path_alt = frames_root_path / file_name
-                    img_path_alt2 = frames_root_path / video_name / os.path.basename(file_name)
-                    if img_path_alt.exists():
-                        img_path = img_path_alt
-                    elif img_path_alt2.exists():
-                        img_path = img_path_alt2
-                    else:
-                        print(f"!!! Missing frame for track {tid}: tried {img_path}, {img_path_alt}, {img_path_alt2}")
-                        continue
-
                 bbox_feats, prev_cx_norm, prev_cy_norm = compute_bbox_features(
                     x,
                     y,
@@ -364,49 +363,64 @@ def extract_features(
                     prev_cy_norm=prev_cy_norm,
                 )
 
-                x1, y1, x2, y2 = pad_and_clip_bbox(
-                    x,
-                    y,
-                    w,
-                    h,
-                    img_w,
-                    img_h,
-                    padding_factor=bbox_padding_factor,
-                )
+                if not only_keypoints:
+                    x1, y1, x2, y2 = pad_and_clip_bbox(
+                        x,
+                        y,
+                        w,
+                        h,
+                        img_w,
+                        img_h,
+                        padding_factor=bbox_padding_factor,
+                    )
 
-                with Image.open(img_path).convert("RGB") as img:
-                    crop = img.crop((x1, y1, x2, y2))
-                    tensor = transform(crop)
+                    img_path = frames_root_path / video_name / file_name
+                    if not img_path.exists():
+                        img_path_alt = frames_root_path / file_name
+                        img_path_alt2 = frames_root_path / video_name / os.path.basename(file_name)
+                        if img_path_alt.exists():
+                            img_path = img_path_alt
+                        elif img_path_alt2.exists():
+                            img_path = img_path_alt2
+                        else:
+                            print(f"!!! Missing frame for track {tid}: tried {img_path}, {img_path_alt}, {img_path_alt2}")
+                            # For CNN features, we must skip the frame if image is missing.
+                            # For keypoints, we can still compute them.
+                            # But currently we process together in batches.
+                            # To keep it simple, if missing, we skip the frame.
+                            continue
 
-                batch_images.append(tensor)
+                    with Image.open(img_path).convert("RGB") as img:
+                        crop = img.crop((x1, y1, x2, y2))
+                        tensor = transform(crop)
+                    batch_images.append(tensor)
+
                 batch_bbox_feats.append(bbox_feats)
 
-                if use_keypoints:
+                if use_keypoints or only_keypoints:
                     keypoints = inst.get("keypoints", [])
                     kp_feat = compute_engineered_keypoint_features(keypoints, img_w, img_h, (x, y, w, h))
                     batch_kp_feats.append(kp_feat)
 
                 batch_labels.append(inst["label"])
                 batch_frames.append(frame_id)
-                # Optional: report how many frames were gathered for this track so user can detect skips
-                # (will appear when saving or skipping)
 
-                if len(batch_images) >= batch_size:
+                if not only_keypoints and len(batch_images) >= batch_size:
                     with torch.no_grad():
                         batch_tensor = torch.stack(batch_images, dim=0).to(device)
                         emb_batch = backbone(batch_tensor)
                     emb_np_batch = emb_batch.cpu().numpy().astype(np.float32)
 
                     for j in range(len(batch_images)):
-                        if use_keypoints:
+                        if use_keypoints or only_keypoints:
                             full_vector = np.concatenate(
-                                [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
-                                axis=0,
+                                [emb_np_batch[j] if not only_keypoints else [], np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
+                               axis=0,
                             )
                         else:
                             full_vector = np.concatenate(
-                                [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32)],
-                                axis=0,
+                                [emb_np_batch[j] if not only_keypoints else [], np.array(batch_bbox_feats[j], dtype=np.float32)],
+                               axis=0,
                             )
                         feats_list.append(full_vector)
                         labels_list.append(batch_labels[j])
@@ -414,29 +428,43 @@ def extract_features(
 
                     batch_images.clear()
                     batch_bbox_feats.clear()
-                    if use_keypoints:
+                    if use_keypoints or only_keypoints:
                         batch_kp_feats.clear()
                     batch_labels.clear()
                     batch_frames.clear()
 
             # Process remaining batch
-            if batch_images:
+            if not only_keypoints and batch_images:
                 with torch.no_grad():
                     batch_tensor = torch.stack(batch_images, dim=0).to(device)
                     emb_batch = backbone(batch_tensor)
                 emb_np_batch = emb_batch.cpu().numpy().astype(np.float32)
 
                 for j in range(len(batch_images)):
-                    if use_keypoints:
+                    if use_keypoints or only_keypoints:
                         full_vector = np.concatenate(
-                            [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
+                            [emb_np_batch[j] if not only_keypoints else [], np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
                             axis=0,
                         )
                     else:
                         full_vector = np.concatenate(
-                            [emb_np_batch[j], np.array(batch_bbox_feats[j], dtype=np.float32)],
+                            [emb_np_batch[j] if not only_keypoints else [], np.array(batch_bbox_feats[j], dtype=np.float32)],
                             axis=0,
                         )
+                    feats_list.append(full_vector)
+                    labels_list.append(batch_labels[j])
+                    frames_list.append(batch_frames[j])
+            elif only_keypoints:
+                # If only keypoints, we didn't use batches for images, 
+                # so we just process the accumulated lists
+                for j in range(len(batch_bbox_feats)):
+                    if use_keypoints or only_keypoints:
+                        full_vector = np.concatenate(
+                            [np.array(batch_bbox_feats[j], dtype=np.float32), np.array(batch_kp_feats[j], dtype=np.float32)],
+                            axis=0,
+                        )
+                    else:
+                        full_vector = np.array(batch_bbox_feats[j], dtype=np.float32)
                     feats_list.append(full_vector)
                     labels_list.append(batch_labels[j])
                     frames_list.append(batch_frames[j])
@@ -458,27 +486,55 @@ def extract_features(
 
 
 if __name__ == "__main__":
-    # Load main config
-    with open("config.yaml", "r") as f:
-        config = yaml.safe_load(f)
+    parser = argparse.ArgumentParser(description="Extract features from pig monitoring videos.")
+    parser.add_argument("--src", type=str, default="data/annotations/behavior", help="Source directory with behavior JSONs")
+    parser.add_argument("--predict", action="store_true", help="Use refined annotations as source for inference")
+    parser.add_argument("--dst", type=str, help="Destination directory for .npz files")
+    parser.add_argument("--frames_root", type=str, help="Root directory for frames")
+    parser.add_argument("--cnn_name", type=str, default="resnet18", help="CNN model name")
+    parser.add_argument("--image_size", type=int, default=224, help="Image resize size")
+    parser.add_argument("--bbox_padding", type=float, default=1.1, help="BBox padding factor")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for CNN")
+    parser.add_argument("--use_keypoints", action="store_true", help="Include keypoint features")
+    parser.add_argument("--only_keypoints", action="store_true", help="Generate ONLY keypoint and bbox features, skipping CNN")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .npz files")
+    parser.add_argument("--video", type=str, help="Process only a specific video")
+    parser.add_argument("--clip", type=str, help="Process only a specific clip")
+
+    args = parser.parse_args()
+
+    # Load main config for defaults
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        config = {}
 
     action_ids = config.get("behavior_classes", {"Lying": 0})
-    frames_root = config.get("frames_folder", "data/images/frames")
-    padding_factor = config.get("bbox_padding_factor", 1.10)
+    frames_root = args.frames_root or config.get("frames_folder", "data/images/frames")
+    padding_factor = args.bbox_padding or config.get("bbox_padding_factor", 1.10)
+    
+    use_keypoints = args.use_keypoints or config.get("use_keypoints", False)
+    
+    src = args.src
+    if args.predict:
+        src = "data/annotations/refined"
 
-    use_keypoints = config.get("use_keypoints", False)
-    SRC = "data/annotations/behavior"
-    DST = "data/features_kp" if use_keypoints else "data/features"
+    dst = args.dst or ("data/features_kp" if use_keypoints else "data/features")
 
     extract_features(
-        SRC,
-        DST,
+        src_dir=src,
+        dst_dir=dst,
         frames_root=frames_root,
         action_to_id=action_ids,
-        cnn_name="resnet18",
-        image_size=224,
+        cnn_name=args.cnn_name,
+        image_size=args.image_size,
         bbox_padding_factor=padding_factor,
-        batch_size=16,
+        batch_size=args.batch_size,
         use_keypoints=use_keypoints,
+        only_keypoints=args.only_keypoints,
+        overwrite=args.overwrite,
+        target_video=args.video,
+        target_clip=args.clip,
     )
 

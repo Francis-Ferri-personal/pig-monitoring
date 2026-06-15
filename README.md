@@ -309,22 +309,29 @@ python behavior/add_behavior_labels.py
 - **Processing**: Copies `data/annotations/refined` to `data/annotations/behavior`. Sets a default action (**Lying**) and applies specific labels from the CSV.
 - **Output**: COCO JSONs in `data/annotations/behavior/` with a new `"action"` field.
 
-### Step 8: Feature Extraction
-Convert annotations into compact numerical tensors (NPZ) for training. The script extracts visual embeddings from a ResNet-18 backbone, bounding box geometry, and (optionally) engineered keypoints.
+### Step 8: Feature Extraction (Training & Inference)
+Convert annotations into compact numerical tensors (NPZ). This is required both for training the model and for running inference on new videos. To maintain compatibility with the LSTM model (which expects 563 features), the standard extraction include visual embeddings, geometry, and keypoints.
 
 ```bash
 # Run inside the project virtualenv (.venv)
 source .venv/bin/activate
-python behavior/feature_extractor.py
+python behavior/feature_extractor.py [FLAGS]
 ```
 
-- **Configuration**: Set `use_keypoints: True` in `config.yaml` to include engineered geometric features.
-- **How it works**:
-  - Resolves `file_name` paths robustly.
-  - Normalizes keypoints to joint-to-joint distances centered on the neck/tail.
+**Available Flags:**
+- `--use_keypoints`: **(Recommended for Inference)** Include visual embeddings + geometry + engineered keypoints. This matches the model's expected input size.
+- `--predict`: Use refined annotations (from `data/annotations/refined`) as the source instead of behavior annotations. Essential for running inference on new videos.
+- `--only_keypoints`: Generate ONLY keypoint and bbox features, skipping the CNN to save storage and compute (Note: only use this if your model was specifically trained without CNN embeddings).
+- `--overwrite`: Overwrite existing `.npz` files.
+- `--video <name>`: Process only a specific video (e.g., `--video June_23_01`).
+- `--clip <id>`: Process only a specific clip (e.g., `--clip 01`).
+
+**How it works:**
+- Resolves `file_name` paths robustly.
+- Normalizes keypoints to joint-to-joint distances centered on the neck/tail.
 - **Output**: 
   - Without keypoints: `data/features/{video}/track_{id}.npz`
-  - With keypoints: `data/features_kp/{video}/track_{id}.npz` (automatically handled by the script).
+  - With keypoints: `data/features_kp/{video}/track_{id}.npz`
 
 ### Step 9: Model Training, Evaluation & Reports
 Train the behavior recognition model. The script supports `RNN`, `LSTM`, `GRU`, and `BiLSTM` architectures.
@@ -347,6 +354,20 @@ python behavior/generate_videos.py --exp keypoints-BiLSTM-80_epoch --video video
 
 - **Logic**: Uses the `best_model.pt` from the experiment folder to generate predictions frame-by-frame and overlays them on the original frames.
 - **Output**: MP4 clips saved to `out/results/{experiment_name}/videos_visual/video3/{clip_id}.mp4`.
+
+### Step 11: Behavior Prediction & Statistics (Inference)
+If you need to obtain the total count of predicted frames per class for each pig (to compute metrics without generating videos), use the `predict_behavior.py` script.
+
+```bash
+python behavior/predict_behavior.py --exp keypoints-BiLSTM-80_epoch --video June_23_01
+```
+
+- **Inputs**: 
+  - `--exp`: The experiment folder containing the trained model.
+  - `--video`: The video to process.
+  - `--src_anns` (Optional): Path to annotations (defaults to `data/annotations/refined`).
+- **How it works**: It runs the model over the precomputed features and aggregates predictions.
+- **Output**: Generates CSV files in `out/predictions/{video}/{clip_id}_counts.csv` containing the total count of detections per class for each track ID.
 
 ---
 
