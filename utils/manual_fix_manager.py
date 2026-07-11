@@ -47,13 +47,17 @@ def list_fixes(video):
         return
     
     print(f"\nManual fixes for video: {video}")
-    for clip, ranges in fixes.items():
+    for clip, steps in fixes.items():
         print(f"  Clip {clip}:")
-        if isinstance(ranges, list):
-            for r in ranges:
-                print(f"    Frames {r['frame_start']}-{r['frame_end']}: {r['remap']}")
+        if isinstance(steps, list):
+            for i, s in enumerate(steps):
+                start = s.get('frame_start', 'All')
+                end = s.get('frame_end', 'All')
+                remap = s.get('remap', 'N/A')
+                delete = s.get('delete', 'N/A')
+                print(f"    Step {i} [{start}-{end}]: Remap: {remap}, Delete: {delete}")
         else:
-            print(f"    Full clip: {ranges}")
+            print(f"    Warning: Clip {clip} is not in list format. Content: {steps}")
 
 def clear_fixes(video):
     path = get_fixes_path(video)

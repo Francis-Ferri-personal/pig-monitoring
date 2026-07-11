@@ -135,12 +135,15 @@ class AnnotationManager:
         img_to_frame = {img['id']: img.get('frame_id') for img in data.get('images', [])}
 
         for r_range in clip_mapping:
-            remap = r_range['remap']
-            frame_start = r_range['frame_start']
-            frame_end = r_range['frame_end']
+            remap = r_range.get('remap', {})
+            frame_start = r_range.get('frame_start', 0)
+            frame_end = r_range.get('frame_end', float('inf'))
 
             mapped_tracker_values = {str(v) for v in remap.values() if v != ""}
             empty_masters = sorted(int(k) for k, v in remap.items() if v == "")
+            
+            if not remap:
+                continue
 
             clip_track_ids = set()
             for ann in data.get('annotations', []):
@@ -297,24 +300,40 @@ class AnnotationManager:
         # 1a. Assign orphan trackers to empty master slots before remapping
         orphan_count = self._assign_orphan_trackers(data, clip_mapping, images_sorted, get_dist)
 
-        # 1b. Initial Remapping
-        for ann in data.get('annotations', []):
-            img_id = ann['image_id']
-            frame_id = img_to_frame.get(img_id)
-            if frame_id is None:
-                continue
-            for r_range in clip_mapping:
-                if r_range['frame_start'] <= frame_id <= r_range['frame_end']:
-                    current_remap = r_range['remap']
-                    current_tracker_id = str(ann.get('track_id'))
-                    for master_id, tracker_id in current_remap.items():
-                        if tracker_id != "" and current_tracker_id == str(tracker_id):
-                            new_val = int(master_id)
-                            if ann['track_id'] != new_val:
-                                ann['track_id'] = new_val
-                                remap_count += 1
-                            break
-                    break
+        # 1b. Sequential Manual Fixes
+        # Each step in clip_mapping is applied in order. 
+        # This allows a flow like: Delete a subset of IDs -> Remap the rest.
+        current_anns = [ann.copy() for ann in data.get('annotations', [])]
+        
+        for step in clip_mapping:
+            frame_start = step.get('frame_start', 0)
+            frame_end = step.get('frame_end', float('inf'))
+            
+            # A. Step-specific Deletions
+            delete_ids = set(step.get('delete', []))
+            if delete_ids:
+                current_anns = [
+                    ann for ann in current_anns 
+                    if not (frame_start <= img_to_frame.get(ann['image_id'], -1) <= frame_end 
+                           and str(ann.get('track_id')) in delete_ids)
+                ]
+            
+            # B. Step-specific Remapping
+            remap_dict = step.get('remap', {})
+            if remap_dict:
+                for ann in current_anns:
+                    frame_id = img_to_frame.get(ann['image_id'], -1)
+                    if frame_start <= frame_id <= frame_end:
+                        current_tid = str(ann.get('track_id'))
+                        for master_id, tracker_id in remap_dict.items():
+                            if tracker_id != "" and current_tid == str(tracker_id):
+                                new_val = int(master_id)
+                                if ann['track_id'] != new_val:
+                                    ann['track_id'] = new_val
+                                    remap_count += 1
+                                break
+        
+        data['annotations'] = current_anns
 
         # 2. Pre-Collision Resolution & NMS
         pre_nms_count = len(data.get('annotations', []))
@@ -351,9 +370,51 @@ class AnnotationManager:
         rescue2_count = self._run_hungarian_rescue(data, images_sorted, get_dist, valid_ids)
         rescue_count += rescue2_count
 
-        # 5. Purge
+        # 5. Purge & Final Fixes
         original_ann_count = len(data['annotations'])
-        data['annotations'] = [ann for ann in data['annotations'] if ann.get('track_id') in valid_ids]
+        
+        final_anns = []
+        for ann in data['annotations']:
+            img_id = ann['image_id']
+            frame_id = img_to_frame.get(img_id, -1)
+            tid = ann.get('track_id')
+            
+            # We need to determine if the current track_id is "allowed" to exist in this frame.
+            # To do this, we check the sequence of manual fixes.
+            # If the last operation affecting this ID was a deletion, it must be removed.
+            # If the last operation was a remapping to this ID, it should be kept.
+            
+            last_op_was_delete = False
+            has_mention = False
+            
+            for step in clip_mapping:
+                frame_start = step.get('frame_start', 0)
+                frame_end = step.get('frame_end', float('inf'))
+                
+                if frame_start <= frame_id <= frame_end:
+                    # Check for deletion
+                    if str(tid) in step.get('delete', []):
+                        last_op_was_delete = True
+                        has_mention = True
+                    
+                    # Check for remapping to this ID (it's a master_id)
+                    remap_dict = step.get('remap', {})
+                    if str(tid) in remap_dict:
+                        last_op_was_delete = False
+                        has_mention = True
+            
+            # Final decision:
+            # 1. If it's not a valid canonical ID, discard it.
+            # 2. If it is a valid ID, but the last manual operation for it was a deletion, discard it.
+            if tid not in valid_ids:
+                continue
+                
+            if has_mention and last_op_was_delete:
+                continue
+                
+            final_anns.append(ann)
+        
+        data['annotations'] = final_anns
         pruned_count = original_ann_count - len(data['annotations'])
 
         if (remap_count > 0 or orphan_count > 0 or col1 > 0 or rescue_count > 0

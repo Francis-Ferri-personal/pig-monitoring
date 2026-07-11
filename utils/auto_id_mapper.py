@@ -339,8 +339,12 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
         
         # We use the laest available mapping for this clip to anchor the next one
         # If it was a manual fix with multiple ranges, we use the last one.
-        effective_remap = current_remap if not isinstance(current_remap, list) else current_remap[-1].get('remap', {})
-        inverse_remap = {int(v): int(k) for k, v in effective_remap.items() if v != ""}
+        if isinstance(current_remap, list):
+            effective_remap = current_remap[-1].get('remap', {})
+        else:
+            effective_remap = current_remap
+        
+        inverse_remap = {int(v): int(k) for k, v in effective_remap.items() if v != "" and isinstance(v, (str, int))}
 
         for tracker_id, avg_bbox in averaged_last_pigs.items():
             if tracker_id in inverse_remap:
@@ -348,7 +352,7 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
                 last_known_pigs[master_id] = avg_bbox
 
         # Propagate positions of unmapped surplus trackers to still-empty master slots
-        used_trackers = {int(v) for v in effective_remap.values() if v != ""}
+        used_trackers = {int(v) for v in effective_remap.values() if v != "" and isinstance(v, (str, int))}
         empty_masters = [int(k) for k, v in effective_remap.items() if v == ""]
         surplus_trackers = {
             t_id: bbox for t_id, bbox in averaged_last_pigs.items()
