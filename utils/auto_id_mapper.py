@@ -279,57 +279,63 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
         persistent_tracks = get_persistent_tracks(annotations, sorted_img_ids, min_occupancy_ratio=min_occupancy)
         print(f"  Clip {clip_name}: Found {len(persistent_tracks)} persistent tracks out of {len(set(ann['track_id'] for ann in annotations))} total track IDs.")
         
-        current_remap = {}
+        # --- COMPUTE AUTOMATIC REMAP ---
+        auto_remap = {}
+        if idx == 0:
+            # First clip initialization
+            print(f"  Clip {clip_name} (First clip): Initializing canonical IDs from persistent tracks.")
+            averaged_first_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
+            tracker_ids_found = sorted(list(averaged_first_pigs.keys()))
+            
+            for m_id, t_id in enumerate(tracker_ids_found[:5]):
+                auto_remap[str(m_id)] = str(t_id)
+            
+            for m_id in range(5):
+                if str(m_id) not in auto_remap:
+                    auto_remap[str(m_id)] = ""
+        else:
+            # Subsequent clips: Match first N frames of current clip against last N frames of previous clip
+            averaged_curr_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
+            
+            prev_pigs_matched = {int(m_id): pos for m_id, pos in last_known_pigs.items() if pos is not None}
+            
+            auto_remap = match_pigs_hungarian(prev_pigs_matched, averaged_curr_pigs, max_distance_threshold=max_dist)
+            
+            for m_id in range(5):
+                if str(m_id) not in auto_remap:
+                    auto_remap[str(m_id)] = ""
+            
+            auto_remap = apply_fallback_remap(
+                auto_remap, prev_pigs_matched, averaged_curr_pigs, max_dist=max_dist
+            )
+            print(f"  Clip {clip_name}: Automatic Hungarian Map: {auto_remap}")
 
         # --- CHECK FOR MANUAL FIXES ---
+        current_remap = {}
         if clip_name in manual_fixes:
             print(f"  [!] Applying manual fix for clip {clip_name}...")
-            # Manual fixes can be a single remap or a list of ranged remaps
             fix_data = manual_fixes[clip_name]
-            if isinstance(fix_data, list):
-                # For the purpose of the mapper's sequential anchor logic, 
-                # we use the LAST range of the manual fix as the anchor for the next clip.
-                # But we record the whole list in the final mapping.
+            
+            if not isinstance(fix_data, list):
+                fix_data = [{"frame_start": 0, "frame_end": last_frame_id, "remap": fix_data}]
+                
+            has_remap = any(isinstance(step, dict) and 'remap' in step for step in fix_data)
+            
+            if not has_remap:
+                # Manual fix only has deletes/metadata, append the auto_remap
+                print(f"  [!] Manual fix lacks a 'remap'. Appending automatic map to preserve identity chain.")
+                current_remap_list = fix_data + [{"frame_start": 0, "frame_end": last_frame_id, "remap": auto_remap}]
+                current_remap = auto_remap
+            else:
                 current_remap_list = fix_data
-                # Use the last range for anchor calculation
-                last_fix = fix_data[-1]
-                current_remap = last_fix.get('remap', {})
-            else:
-                current_remap = fix_data
-                current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
+                # Use the last remap for anchor calculation
+                for step in reversed(fix_data):
+                    if isinstance(step, dict) and 'remap' in step:
+                        current_remap = step['remap']
+                        break
         else:
-            if idx == 0:
-                # First clip initialization
-                print(f"  Clip {clip_name} (First clip): Initializing canonical IDs from persistent tracks.")
-                averaged_first_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
-                tracker_ids_found = sorted(list(averaged_first_pigs.keys()))
-                
-                for m_id, t_id in enumerate(tracker_ids_found[:5]):
-                    current_remap[str(m_id)] = str(t_id)
-                
-                for m_id in range(5):
-                    if str(m_id) not in current_remap:
-                        current_remap[str(m_id)] = ""
-                
-                current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
-            else:
-                # Subsequent clips: Match first N frames of current clip against last N frames of previous clip
-                averaged_curr_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=True, decay_factor=decay_factor)
-                
-                prev_pigs_matched = {int(m_id): pos for m_id, pos in last_known_pigs.items() if pos is not None}
-                
-                current_remap = match_pigs_hungarian(prev_pigs_matched, averaged_curr_pigs, max_distance_threshold=max_dist)
-                
-                for m_id in range(5):
-                    if str(m_id) not in current_remap:
-                        current_remap[str(m_id)] = ""
-                
-                current_remap = apply_fallback_remap(
-                    current_remap, prev_pigs_matched, averaged_curr_pigs, max_dist=max_dist
-                )
-                
-                print(f"  Clip {clip_name}: Matched using Hungarian Algorithm. Map: {current_remap}")
-                current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
+            current_remap = auto_remap
+            current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
 
         # Compute average positions of persistent pigs in the last N frames of this clip
         averaged_last_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=False, decay_factor=decay_factor)
@@ -337,14 +343,38 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
         # Store positions using canonical master IDs (remapping current tracker IDs to master IDs)
         last_known_pigs = {str(m_id): None for m_id in range(5)}
         
-        # We use the laest available mapping for this clip to anchor the next one
+        # We use the latest available mapping for this clip to anchor the next one
         # If it was a manual fix with multiple ranges, we use the last one.
         if isinstance(current_remap, list):
-            effective_remap = current_remap[-1].get('remap', {})
+            # If there are multiple ranges, the 'remap' dict might be buried inside one of them
+            # We look for the first range that actually contains a 'remap' key
+            effective_remap = {}
+            for entry in current_remap:
+                if isinstance(entry, dict) and 'remap' in entry:
+                    effective_remap = entry['remap']
+                    break
+            if not effective_remap:
+                # Fallback: if none of the ranges have a 'remap' key, 
+                # we'unroll the list to see if the list itself is the remap (unlikely but safe)
+                effective_remap = current_remap
         else:
             effective_remap = current_remap
-        
-        inverse_remap = {int(v): int(k) for k, v in effective_remap.items() if v != "" and isinstance(v, (str, int))}
+
+        # Ensure effective_remap is a dictionary before processing
+        if not isinstance(effective_remap, dict):
+             # If it's a list (from a 'delete' entry), we can't use it as a map.
+             # We must rely on the inherited state or an empty dict.
+             effective_remap = {}
+
+        # Now safely create the inverse map, ensuring we only process integer/string keys/values
+        inverse_remap = {}
+        for k, v in effective_remap.items():
+            try:
+                # Only include if v is not an empty string and can be converted to int
+                if v != "" and isinstance(v, (str, int)):
+                    inverse_remap[int(v)] = int(k)
+            except (ValueError, TypeError):
+                continue
 
         for tracker_id, avg_bbox in averaged_last_pigs.items():
             if tracker_id in inverse_remap:
