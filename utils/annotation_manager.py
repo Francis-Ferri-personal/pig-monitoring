@@ -318,10 +318,29 @@ class AnnotationManager:
                            and str(ann.get('track_id')) in delete_ids)
                 ]
             
+            # C. Step-specific Reintroduce (Copy annotations from another POSE tracker)
+            reintroduce_dict = step.get('reintroduce', {})
+            if reintroduce_dict:
+                for master_id, source_tracker_id in reintroduce_dict.items():
+                    if source_tracker_id == "":
+                        continue
+                    
+                    for orig_ann in data.get('annotations', []):
+                        frame_id = img_to_frame.get(orig_ann['image_id'], -1)
+                        if frame_start <= frame_id <= frame_end:
+                            if str(orig_ann.get('track_id')) == str(source_tracker_id):
+                                new_ann = orig_ann.copy()
+                                new_ann['track_id'] = int(master_id)
+                                new_ann['is_reintroduced'] = True
+                                current_anns.append(new_ann)
+                                remap_count += 1
+            
             # B. Step-specific Remapping
             remap_dict = step.get('remap', {})
             if remap_dict:
                 for ann in current_anns:
+                    if ann.get('is_reintroduced'):
+                        continue
                     frame_id = img_to_frame.get(ann['image_id'], -1)
                     if frame_start <= frame_id <= frame_end:
                         current_tid = str(ann.get('track_id'))
@@ -352,7 +371,11 @@ class AnnotationManager:
             while len(sorted_anns) > 0:
                 best = sorted_anns.pop(0)
                 kept.append(best)
-                sorted_anns = [a for a in sorted_anns if calculate_iou(best['bbox'], a['bbox']) < 0.85]
+                sorted_anns = [
+                    a for a in sorted_anns 
+                    if calculate_iou(best['bbox'], a['bbox']) < 0.85 
+                    or (a.get('track_id') != best.get('track_id') and (a.get('is_reintroduced') or best.get('is_reintroduced')))
+                ]
             nms_kept_anns.extend(kept)
 
         data['annotations'] = nms_kept_anns

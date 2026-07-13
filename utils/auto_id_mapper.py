@@ -139,7 +139,12 @@ def match_pigs_hungarian(prev_averaged_pigs, curr_averaged_pigs, max_distance_th
         for j, t_id in enumerate(tracker_ids):
             curr_center = get_centroid(curr_averaged_pigs[t_id])
             # Euclidean distance between centroids
-            cost_matrix[i, j] = np.sqrt((prev_center[0] - curr_center[0])**2 + (prev_center[1] - curr_center[1])**2)
+            dist = np.sqrt((prev_center[0] - curr_center[0])**2 + (prev_center[1] - curr_center[1])**2)
+            # Penalty for impossible matches to avoid them pulling away valid assignments
+            if dist > max_distance_threshold:
+                cost_matrix[i, j] = 1e6
+            else:
+                cost_matrix[i, j] = dist
 
     # Solve matching problem using the Hungarian algorithm (supports rectangular matrices)
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -147,9 +152,15 @@ def match_pigs_hungarian(prev_averaged_pigs, curr_averaged_pigs, max_distance_th
     # Compile the final mapping dict, applying the distance threshold check (gating)
     mapping = {}
     for r, c in zip(row_ind, col_ind):
-        dist = cost_matrix[r, c]
-        m_id = str(master_ids[r])
-        t_id = str(tracker_ids[c])
+        m_id_raw = master_ids[r]
+        t_id_raw = tracker_ids[c]
+        
+        m_id = str(m_id_raw)
+        t_id = str(t_id_raw)
+        
+        prev_center = get_centroid(prev_averaged_pigs[m_id_raw])
+        curr_center = get_centroid(curr_averaged_pigs[t_id_raw])
+        dist = np.sqrt((prev_center[0] - curr_center[0])**2 + (prev_center[1] - curr_center[1])**2)
         
         if dist <= max_distance_threshold:
             mapping[m_id] = t_id
@@ -176,19 +187,32 @@ def match_orphan_trackers_to_empty_masters(empty_master_ids, orphan_tracker_bbox
             orphan_center = get_centroid(orphan_tracker_bboxes[t_id])
             if prev_bbox is not None:
                 prev_center = get_centroid(prev_bbox)
-                cost_matrix[i, j] = np.sqrt(
+                dist = np.sqrt(
                     (prev_center[0] - orphan_center[0])**2 + (prev_center[1] - orphan_center[1])**2
                 )
+                if dist > max_distance_threshold:
+                    cost_matrix[i, j] = 1e6
+                else:
+                    cost_matrix[i, j] = dist
             else:
-                cost_matrix[i, j] = 0.0
+                cost_matrix[i, j] = 1e5
 
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     mapping = {}
     for r, c in zip(row_ind, col_ind):
-        dist = cost_matrix[r, c]
+        # We need the true distance, not the penalized cost
         m_id = str(master_ids[r])
         t_id = str(tracker_ids[c])
-        if prev_averaged_pigs.get(master_ids[r]) is None or dist <= max_distance_threshold:
+        
+        prev_bbox = prev_averaged_pigs.get(master_ids[r])
+        if prev_bbox is not None:
+            prev_center = get_centroid(prev_bbox)
+            orphan_center = get_centroid(orphan_tracker_bboxes[tracker_ids[c]])
+            dist = np.sqrt((prev_center[0] - orphan_center[0])**2 + (prev_center[1] - orphan_center[1])**2)
+        else:
+            dist = 0.0
+            
+        if prev_bbox is None or dist <= max_distance_threshold:
             mapping[m_id] = t_id
             if dist > 0:
                 print(f"    [Fallback Match] canonical ID {m_id} -> tracker ID {t_id} (distance {dist:.1f}px)")

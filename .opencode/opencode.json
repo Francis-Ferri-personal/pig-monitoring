@@ -8,14 +8,8 @@
         "baseURL": "http://server:11434/v1"
       },
       "models": {
-        "gemma4:31b": {
+        "gemma4:26b": {
           "name": "Gemma 4"
-        },
-        "nemotron3:33b": {
-          "name": "Nemotron 3"
-        },
-        "gpt-oss:20b": {
-          "name": "GPT OSS"
         }
       }
     }
