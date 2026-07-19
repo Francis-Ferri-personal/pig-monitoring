@@ -335,31 +335,89 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
             print(f"  Clip {clip_name}: Automatic Hungarian Map: {auto_remap}")
 
         # --- CHECK FOR MANUAL FIXES ---
-        current_remap = {}
+        current_remap_list = []
+        effective_remap = None
+        
         if clip_name in manual_fixes:
             print(f"  [!] Applying manual fix for clip {clip_name}...")
             fix_data = manual_fixes[clip_name]
             
             if not isinstance(fix_data, list):
                 fix_data = [{"frame_start": 0, "frame_end": last_frame_id, "remap": fix_data}]
-                
-            has_remap = any(isinstance(step, dict) and 'remap' in step for step in fix_data)
             
-            if not has_remap:
-                # Manual fix only has deletes/metadata, append the auto_remap
-                print(f"  [!] Manual fix lacks a 'remap'. Appending automatic map to preserve identity chain.")
-                current_remap_list = fix_data + [{"frame_start": 0, "frame_end": last_frame_id, "remap": auto_remap}]
-                current_remap = auto_remap
-            else:
-                current_remap_list = fix_data
-                # Use the last remap for anchor calculation
-                for step in reversed(fix_data):
-                    if isinstance(step, dict) and 'remap' in step:
-                        current_remap = step['remap']
-                        break
+            # Extract all steps that are not remap steps (e.g., delete, reintroduce, etc.)
+            non_remap_steps = []
+            manual_remap_steps = []
+            for step in fix_data:
+                if isinstance(step, dict):
+                    if 'remap' in step:
+                        manual_remap_steps.append(step)
+                    else:
+                        non_remap_steps.append(step)
+            
+            # Start with the whole clip mapped to auto_remap
+            intervals = [(0, last_frame_id, auto_remap.copy())]
+            
+            for step in manual_remap_steps:
+                fs = step.get('frame_start', 0)
+                fe = step.get('frame_end', last_frame_id)
+                manual_remap = step['remap']
+                
+                # Split intervals at fs
+                new_intervals = []
+                for s, e, r in intervals:
+                    if s < fs <= e:
+                        new_intervals.append((s, fs - 1, r.copy()))
+                        new_intervals.append((fs, e, r.copy()))
+                    else:
+                        new_intervals.append((s, e, r))
+                intervals = new_intervals
+                
+                # Split intervals at fe
+                new_intervals = []
+                for s, e, r in intervals:
+                    if s <= fe < e:
+                        new_intervals.append((s, fe, r.copy()))
+                        new_intervals.append((fe + 1, e, r.copy()))
+                    else:
+                        new_intervals.append((s, e, r))
+                intervals = new_intervals
+                
+                # Apply manual_remap to any intervals inside [fs, fe]
+                for i in range(len(intervals)):
+                    s, e, r = intervals[i]
+                    if fs <= s and e <= fe:
+                        # Merge manual_remap into r
+                        merged_r = r.copy()
+                        for m_id, t_id in manual_remap.items():
+                            # Remove other master ID assignments to this tracker ID to avoid collision
+                            for other_m, other_t in list(merged_r.items()):
+                                if other_t == t_id and other_m != m_id:
+                                    merged_r[other_m] = ""
+                            merged_r[m_id] = t_id
+                        intervals[i] = (s, e, merged_r)
+            
+            # Build the current_remap_list
+            # First, non-remap steps
+            current_remap_list.extend(non_remap_steps)
+            # Then, the partitioned remap steps
+            for s, e, r in intervals:
+                current_remap_list.append({
+                    "frame_start": s,
+                    "frame_end": e,
+                    "remap": r
+                })
+                
+            # For anchor calculation, find the remap that applies at the end of the clip
+            for s, e, r in intervals:
+                if s <= last_frame_id <= e:
+                    effective_remap = r
+                    break
+            if effective_remap is None:
+                effective_remap = intervals[-1][2]
         else:
-            current_remap = auto_remap
-            current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": current_remap}]
+            effective_remap = auto_remap
+            current_remap_list = [{"frame_start": 0, "frame_end": last_frame_id, "remap": auto_remap}]
 
         # Compute average positions of persistent pigs in the last N frames of this clip
         averaged_last_pigs = get_average_bboxes(annotations, sorted_img_ids, n_frames, persistent_tracks, from_start=False, decay_factor=decay_factor)
@@ -367,29 +425,6 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
         # Store positions using canonical master IDs (remapping current tracker IDs to master IDs)
         last_known_pigs = {str(m_id): None for m_id in range(5)}
         
-        # We use the latest available mapping for this clip to anchor the next one
-        # If it was a manual fix with multiple ranges, we use the last one.
-        if isinstance(current_remap, list):
-            # If there are multiple ranges, the 'remap' dict might be buried inside one of them
-            # We look for the first range that actually contains a 'remap' key
-            effective_remap = {}
-            for entry in current_remap:
-                if isinstance(entry, dict) and 'remap' in entry:
-                    effective_remap = entry['remap']
-                    break
-            if not effective_remap:
-                # Fallback: if none of the ranges have a 'remap' key, 
-                # we'unroll the list to see if the list itself is the remap (unlikely but safe)
-                effective_remap = current_remap
-        else:
-            effective_remap = current_remap
-
-        # Ensure effective_remap is a dictionary before processing
-        if not isinstance(effective_remap, dict):
-             # If it's a list (from a 'delete' entry), we can't use it as a map.
-             # We must rely on the inherited state or an empty dict.
-             effective_remap = {}
-
         # Now safely create the inverse map, ensuring we only process integer/string keys/values
         inverse_remap = {}
         for k, v in effective_remap.items():
