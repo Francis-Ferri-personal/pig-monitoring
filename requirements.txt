@@ -4,4 +4,6 @@ moviepy
 opencv-python-headless<4.11
 psutil
 pandas
--e ./sam3[notebooks]
+fastapi
+uvicorn
+python-multipart
