@@ -13,7 +13,11 @@ from services.mask_service import MaskService
 from services.sam_service import SamService
 from services.feat_extract_service import FeatureExtractionService
 from services.behavior_service import  BehaviorPredictionService
+
 from utils.pose import trigger_isolated_pose_inference
+
+from services.video_service import VideoRenderService
+
 
 sampling_service = VideoSamplingService()
 
@@ -26,6 +30,8 @@ sam_service = SamService()
 feature_extractor = FeatureExtractionService(model_name="resnet18", batch_size=16)
 
 behavior_service = BehaviorPredictionService()
+
+video_service  = VideoRenderService()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -143,27 +149,38 @@ async def upload_video(file: UploadFile = File(...)):
             raise HTTPException(status_code=500, detail=f"Feature Extraction error: {str(e)}")
 
 
-        # Getting behaviors
+        # 8. Getting behaviors
         predictions_output_dir = behavior_service.predict_and_count(
             session_id=session_id,
             coco_data=final_coco_with_pose
         )
 
+        # 9. Rendering Annotated Videos
+        logger.info(f"Rendering output videos for session: {session_id}")
+        keypoints_video_path = video_service.generate_pose_video(
+            session_id=session_id,
+            coco_data=final_coco_with_pose,
+            frames_dir=frames_directory,
+            output_dir=UPLOAD_DIR
+        )
 
-
-        # Final. Prepare the response
-        video_url_in_backend = f"/uploads/{session_id}_web.mp4"
-        
-        logger.info(f"Upload successful. Session: {session_id}, URL: {video_url_in_backend}")
+        behavior_video_path = video_service.generate_behavior_video(
+            session_id=session_id,
+            coco_data=final_coco_with_pose,
+            predictions_dir=predictions_output_dir,
+            frames_dir=frames_directory,
+            output_dir=UPLOAD_DIR
+        )
         
         return {
             "session_id": session_id,
             "video_name": video_name_stem,
-            "original_url": video_url_in_backend,
-            "keypoints_url": video_url_in_backend,
-            "behavior_url": video_url_in_backend,
+            "original_url": f"/uploads/{session_id}_web.mp4",
+            "keypoints_url": f"/uploads/{session_id}_pose.mp4",
+            "behavior_url": f"/uploads/{session_id}_behavior.mp4",
             "message": "Upload successful. Video is ready for playback."
         }
+
     except Exception as e:
         logger.error(f"Error during upload: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing upload: {str(e)}")
