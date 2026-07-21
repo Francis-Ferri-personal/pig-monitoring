@@ -12,7 +12,7 @@ from services.sampling_service import VideoSamplingService
 from services.mask_service import MaskService
 from services.sam_service import SamService
 from services.feat_extract_service import FeatureExtractionService
-
+from services.behavior_service import  BehaviorPredictionService
 from utils.pose import trigger_isolated_pose_inference
 
 sampling_service = VideoSamplingService()
@@ -24,6 +24,8 @@ mask_service = MaskService(
 sam_service = SamService()
 
 feature_extractor = FeatureExtractionService(model_name="resnet18", batch_size=16)
+
+behavior_service = BehaviorPredictionService()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -139,6 +141,13 @@ async def upload_video(file: UploadFile = File(...)):
         except Exception as e:
             logger.error(f"Feature Extraction stage failed for session {session_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Feature Extraction error: {str(e)}")
+
+
+        # Getting behaviors
+        predictions_output_dir = behavior_service.predict_and_count(
+            session_id=session_id,
+            coco_data=final_coco_with_pose
+        )
 
 
 
