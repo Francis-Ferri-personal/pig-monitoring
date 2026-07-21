@@ -59,13 +59,11 @@ class BehaviorPredictionService:
                 counts[track_id][pred] += 1
 
     def predict_and_count(self, session_id: str, coco_data: Dict[str, Any]) -> str:
-        """Reads features from a single session .npz file, runs inference, and writes CSV counts."""
         if self.model is None:
             self.model = self._load_model_once()
             if self.model is None:
                 raise FileNotFoundError(f"Model checkpoint missing at absolute path: {MODEL_PATH}")
 
-        # Path to single multi-modal features .npz file
         npz_path = os.path.join("data", "features", f"{session_id}_features.npz")
         if not os.path.exists(npz_path):
             raise FileNotFoundError(f"Feature file not found at: {npz_path}")
@@ -74,25 +72,31 @@ class BehaviorPredictionService:
         logger.info(f"Running behavior inference for session: {session_id}")
 
         npz_data = np.load(npz_path, allow_pickle=True)
+        keys_found = list(npz_data.files)
 
-        # Case 1: Features stored in a nested dictionary under 'tracks'
+        # Caso 1: Estructura anidada 'tracks'
         if "tracks" in npz_data:
             tracks_dict = npz_data["tracks"].item()
             for track_id, feats in tracks_dict.items():
                 self._process_track_features(feats, int(track_id), counts)
 
-        # Case 2: Features stored with keys corresponding to track IDs (e.g., 'track_1' or '1')
+        # Caso 2: Compatible con FeatureExtractionService (formato track_X_features)
         else:
-            for key in npz_data.files:
-                clean_key = key.replace("track_", "")
-                if not clean_key.isdigit():
-                    continue
-                
-                track_id = int(clean_key)
-                feats = npz_data[key]
-                self._process_track_features(feats, track_id, counts)
+            for key in keys_found:
+                # Solo procesamos las matrices de features (ignoramos track_X_frames)
+                if key.startswith("track_") and key.endswith("_features"):
+                    # Extrae solo el número de ID (ejemplo: 'track_12_features' -> 12)
+                    track_id_str = key.replace("track_", "").replace("_features", "")
+                    
+                    if not track_id_str.isdigit():
+                        continue
+                        
+                    track_id = int(track_id_str)
+                    feats = npz_data[key]  # Matriz de forma (N_frames, 563)
+                    
+                    self._process_track_features(feats, track_id, counts)
 
-        # Export prediction counts to CSV
+        # Exportar los conteos predichos al CSV
         out_dir = os.path.join("data", "out", "predictions", session_id)
         os.makedirs(out_dir, exist_ok=True)
         csv_path = os.path.join(out_dir, f"{session_id}_counts.csv")
@@ -105,5 +109,5 @@ class BehaviorPredictionService:
                 row = [tid] + [counts[tid][cls_idx] for cls_idx in range(len(BEHAVIOR_CLASSES))]
                 writer.writerow(row)
 
-        logger.info(f"Predictions saved to: {csv_path}")
+        logger.info(f"Predictions saved to: {csv_path} (Tracks procesados: {len(counts)})")
         return csv_path
