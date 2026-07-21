@@ -193,8 +193,26 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
             print(f"!!! Frames missing for {clip_frames_dir}, skipping.")
             continue
 
-        sample_img = cv2.imread(os.path.join(clip_frames_dir, "00000.png"))
+        # Do not assume PNG or a zero-based filename: use the first frame listed
+        # in the COCO file that actually exists on disk.
+        ordered_images = sorted(
+            clip_data["images"],
+            key=lambda image: int(image.get("frame_id", image.get("id", 0))),
+        )
+        first_frame_path = next(
+            (
+                os.path.join(clip_frames_dir, os.path.basename(image["file_name"]))
+                for image in ordered_images
+                if os.path.exists(os.path.join(clip_frames_dir, os.path.basename(image["file_name"])))
+            ),
+            None,
+        )
+        if first_frame_path is None:
+            print(f"!!! No COCO frame files found in {clip_frames_dir}, skipping.")
+            continue
+        sample_img = cv2.imread(first_frame_path)
         if sample_img is None:
+            print(f"!!! Could not read {first_frame_path}, skipping.")
             continue
         h, w, _ = sample_img.shape
 

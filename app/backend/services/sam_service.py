@@ -29,6 +29,7 @@ class SamService:
     def process_video(
         self, 
         video_path: str, 
+        video_name: str,
         prompt_text: str = "pig",
     ) -> tuple[str, int]:
         video_path_obj = Path(video_path)
@@ -71,8 +72,8 @@ class SamService:
             logging.info("Converting output masks into COCO format data...")
             coco_data, _ = sam_to_coco(
                 outputs_per_frame=outputs_per_frame,
-                video_id='N/A',
-                video_name='N/A',
+                video_id=video_name,
+                video_name=video_name,
                 frame_paths=virtual_frame_paths,
             )
 

@@ -19,6 +19,7 @@ from utils.pose import trigger_isolated_pose_inference
 from services.video_service import VideoRenderService
 
 
+
 sampling_service = VideoSamplingService()
 
 mask_service = MaskService(
@@ -108,12 +109,11 @@ async def upload_video(file: UploadFile = File(...)):
         masked_path = mask_service.apply(video_1fps_path)
 
         # 5. Apply SAM
-        coco_anns = sam_service.process_video(masked_path)
+        coco_anns = sam_service.process_video(masked_path, session_id)
         
         # 6. Pose estimation (Aislado vía Subproceso)
         logger.info(f"Initiating isolated MMPose pipeline for session: {session_id}")
         try:
-            frames_directory = os.path.join("data", "frames", session_id) 
             
             final_coco_with_pose = trigger_isolated_pose_inference(
                 sam_coco_data=coco_anns,

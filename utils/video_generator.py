@@ -78,7 +78,7 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
                 frame_id=frame_idx,
                 annotations_dir=ann_dir,
                 frames_root=frames_root,
-                show_pose=(mode == "pose"),
+                show_pose=(mode in {"pose", "refined"}),
                 image_file_name=img_entry.get("file_name")
             )
         

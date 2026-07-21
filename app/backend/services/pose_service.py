@@ -63,7 +63,8 @@ class PoseEstimationService:
             if not image_info:
                 continue
                 
-            img_path = os.path.join(frames_dir, image_info['file_name'])
+            img_filename = Path(image_info['file_name']).name
+            img_path = os.path.join(frames_dir, img_filename)
             img = cv2.imread(img_path)
             if img is None:
                 logging.warning(f"Frame file could not be read: {img_path}")
