@@ -5,6 +5,14 @@ import argparse
 from tqdm import tqdm
 import json
 import re
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.backend.services.video_style import convert_to_web_mp4
 
 # Import the visualization function
 from viz_utils import visualize_coco_frame
@@ -28,8 +36,8 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
     else:
         video_out_path = os.path.join(final_out_dir, f"{clip_id}.mp4")
 
-    if os.path.exists(video_out_path):
-        print(f"  >>> Skipping: {video_out_path} (Already exists)")
+    if os.path.exists(video_out_path) and not args.overwrite:
+        print(f"  >>> Skipping: {video_out_path} (Already exists; use --overwrite to regenerate)")
         return
 
     with open(json_path, 'r') as f:
@@ -44,6 +52,7 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
 
     print(f"\n>>> Generating {mode} video for {video_dir}/{clip_id}")
     video_writer = None
+    raw_video_out_path = str(Path(video_out_path).with_name(f"{Path(video_out_path).stem}_raw.mp4"))
     
     for img_entry in tqdm(images, desc=f"Clip {clip_id}", leave=False):
         frame_idx = img_entry['frame_id']
@@ -69,24 +78,28 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
                 frame_id=frame_idx,
                 annotations_dir=ann_dir,
                 frames_root=frames_root,
-                show_pose=(mode == "pose" or mode == "refined")
+                show_pose=(mode == "pose"),
+                image_file_name=img_entry.get("file_name")
             )
         
         if vis_frame is None:
             continue
 
-        cv2.putText(vis_frame, f"{frame_idx}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            
         h, w = vis_frame.shape[:2]
         
         if video_writer is None:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video_writer = cv2.VideoWriter(video_out_path, fourcc, args.fps, (w, h))
+            video_writer = cv2.VideoWriter(raw_video_out_path, fourcc, args.fps, (w, h))
         
         video_writer.write(vis_frame)
 
     if video_writer:
         video_writer.release()
+        try:
+            convert_to_web_mp4(Path(raw_video_out_path), Path(video_out_path))
+        finally:
+            if os.path.exists(raw_video_out_path):
+                os.remove(raw_video_out_path)
         print(f"  ✓ Video saved: {video_out_path}")
     else:
         print(f"  ! No frames processed for {clip_id}")
@@ -100,6 +113,7 @@ def main():
     parser.add_argument("--sam", action="store_true", help="Use SAM annotations (masks)")
     parser.add_argument("--refined", action="store_true", help="Use Refined annotations (cleaned SAM)")
     parser.add_argument("--output", type=str, default=None, help="Output video path")
+    parser.add_argument("--overwrite", action="store_true", help="Regenerate an existing output video")
     parser.add_argument("--fps", type=int, default=1, help="Output video FPS.")
     
     args = parser.parse_args()

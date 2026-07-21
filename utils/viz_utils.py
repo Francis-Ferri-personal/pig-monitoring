@@ -5,7 +5,9 @@ import numpy as np
 from PIL import Image
 from pycocotools import mask as mask_utils
 
-def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None, show_pose=False):
+from app.backend.services.video_style import draw_pose_annotations
+
+def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None, show_pose=False, image_file_name=None):
     """
     Visualizes a specific frame from a clip using its COCO annotations. 
     Optimized version using OpenCV for significantly faster rendering.
@@ -21,10 +23,17 @@ def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/an
 
     # 1. Find the image entry
     img_entry = None
-    for img in coco_data.get('images', []):
-        if img.get('frame_id') == frame_id:
-            img_entry = img
-            break
+    if image_file_name:
+        requested_name = os.path.basename(image_file_name)
+        for img in coco_data.get('images', []):
+            if os.path.basename(img.get('file_name', '')) == requested_name:
+                img_entry = img
+                break
+    if img_entry is None:
+        for img in coco_data.get('images', []):
+            if img.get('frame_id') == frame_id:
+                img_entry = img
+                break
     
     if not img_entry:
         return None
@@ -56,6 +65,16 @@ def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/an
     # 3. Get annotations and Categories
     img_id = img_entry['id']
     anns = [ann for ann in coco_data.get('annotations', []) if ann['image_id'] == img_id]
+
+    # Pose clips use the same renderer as the web application.
+    if show_pose:
+        vis_image = draw_pose_annotations(vis_image, anns)
+        if output_path:
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            cv2.imwrite(output_path, vis_image)
+            print(f"Visualization saved to: {output_path}")
+        return vis_image
+
     categories = {cat['id']: cat for cat in coco_data.get('categories', [])}
 
     # Consistent colors for tracks

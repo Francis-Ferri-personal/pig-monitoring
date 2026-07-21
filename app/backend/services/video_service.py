@@ -2,9 +2,15 @@ import os
 import cv2
 import glob
 import logging
-import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any
+
+from services.video_style import (
+    SKELETON_CONNECTIONS,
+    convert_to_web_mp4,
+    draw_pose_annotations,
+    draw_prediction_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +21,8 @@ class VideoRenderService:
     and Behavior Predictions) from frame sequences and COCO annotations.
     """
 
-    # COCO Keypoint Skeletons (Pairs of connected keypoint indices)
-    # Adjust this skeleton topology if your keypoint format differs
-    SKELETON_CONNECTIONS: List[Tuple[int, int]] = [
-        (0, 1), (0, 2), (1, 3), (2, 4),        # Facial keypoints / Head
-        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),# Upper body / Limbs
-        (5, 11), (6, 12), (11, 12),             # Torso
-        (11, 13), (13, 15), (12, 14), (14, 16)  # Lower body / Legs
-    ]
+    # Kept as a class attribute for backwards compatibility.
+    SKELETON_CONNECTIONS = SKELETON_CONNECTIONS
 
     def __init__(self, fps: int = 1):
         """
@@ -57,7 +57,7 @@ class VideoRenderService:
         self._build_video_from_frames(
             frames_dir=frames_dir,
             output_video_path=raw_output_path,
-            draw_callback=lambda frame, frame_idx: self._draw_pose_overlay(frame, frame_idx, coco_data)
+            draw_callback=lambda frame, frame_idx, frame_path: self._draw_pose_overlay(frame, frame_idx, coco_data, frame_path)
         )
 
         # Transcode raw video to standard H.264 format for browser web compatibility
@@ -96,8 +96,8 @@ class VideoRenderService:
         self._build_video_from_frames(
             frames_dir=frames_dir,
             output_video_path=raw_output_path,
-            draw_callback=lambda frame, frame_idx: self._draw_behavior_overlay(
-                frame, frame_idx, coco_data, predictions_dir
+            draw_callback=lambda frame, frame_idx, frame_path: self._draw_behavior_overlay(
+                frame, frame_idx, coco_data, predictions_dir, frame_path
             )
         )
 
@@ -134,83 +134,56 @@ class VideoRenderService:
                 continue
 
             # Apply annotations on the current frame
-            annotated_frame = draw_callback(frame, frame_idx)
+            annotated_frame = draw_callback(frame, frame_idx, frame_path)
             out.write(annotated_frame)
 
         out.release()
 
-    def _draw_pose_overlay(self, frame: cv2.Mat, frame_idx: int, coco_data: Dict[str, Any]) -> cv2.Mat:
-        """
-        Draws bounding boxes, track IDs, and keypoint skeletons for a specific frame index.
-        """
-        # Search annotations corresponding to the current frame index
-        image_id = frame_idx + 1  # Standard COCO 1-based indexing
-        annotations = [ann for ann in coco_data.get("annotations", []) if ann.get("image_id") == image_id]
+    def _annotations_for_frame(self, coco_data: Dict[str, Any], frame_idx: int, frame_path: str):
+        """Find COCO annotations for the exact source image, without index offsets."""
+        images = coco_data.get("images", [])
+        image_name = Path(frame_path).name
+        image = next((item for item in images if Path(item.get("file_name", "")).name == image_name), None)
+        if image is None:
+            image = next((item for item in images if item.get("frame_id") == frame_idx), None)
+        if image is None:
+            ordered_images = sorted(images, key=lambda item: item.get("frame_id", item.get("id", 0)))
+            image = ordered_images[frame_idx] if frame_idx < len(ordered_images) else None
+        if image is None:
+            return []
+        image_id = image.get("id")
+        return [annotation for annotation in coco_data.get("annotations", []) if annotation.get("image_id") == image_id]
 
-        for ann in annotations:
-            track_id = ann.get("track_id", ann.get("id", "N/A"))
-            bbox = ann.get("bbox", [])  # Format: [x, y, width, height]
-            keypoints = ann.get("keypoints", [])  # Format: [x1, y1, v1, x2, y2, v2, ...]
+    def _draw_pose_overlay(self, frame: cv2.Mat, frame_idx: int, coco_data: Dict[str, Any], frame_path: str) -> cv2.Mat:
+        """Draw pose annotations matched to the actual frame file."""
+        return draw_pose_annotations(frame, self._annotations_for_frame(coco_data, frame_idx, frame_path))
 
-            # 1. Draw Bounding Box
-            if len(bbox) == 4:
-                x, y, w, h = map(int, bbox)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                
-                # Draw ID Tag
-                label = f"ID: {track_id}"
-                cv2.putText(frame, label, (x, max(y - 8, 15)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-            # 2. Draw Keypoints and Connections
-            if keypoints and len(keypoints) >= 3:
-                parsed_kpts = []
-                for i in range(0, len(keypoints), 3):
-                    kx, ky, vis = keypoints[i], keypoints[i+1], keypoints[i+2]
-                    parsed_kpts.append((int(kx), int(ky), vis))
-
-                    # Draw keypoint joint if visible
-                    if vis > 0:
-                        cv2.circle(frame, (int(kx), int(ky)), 4, (0, 0, 255), -1)
-
-                # Draw skeleton lines
-                for p1_idx, p2_idx in self.SKELETON_CONNECTIONS:
-                    if p1_idx < len(parsed_kpts) and p2_idx < len(parsed_kpts):
-                        pt1, pt2 = parsed_kpts[p1_idx], parsed_kpts[p2_idx]
-                        if pt1[2] > 0 and pt2[2] > 0:  # Both keypoints visible
-                            cv2.line(frame, (pt1[0], pt1[1]), (pt2[0], pt2[1]), (255, 255, 0), 2)
-
-        return frame
 
     def _draw_behavior_overlay(
         self,
         frame: cv2.Mat,
         frame_idx: int,
         coco_data: Dict[str, Any],
-        predictions_dir: str
+        predictions_dir: str,
+        frame_path: str
     ) -> cv2.Mat:
         """
         Draws behavior labels (Ground Truth & Predicted Behaviors) alongside bounding boxes.
         """
         # First draw base pose annotations
-        frame = self._draw_pose_overlay(frame, frame_idx, coco_data)
+        frame = draw_pose_annotations(
+            frame, self._annotations_for_frame(coco_data, frame_idx, frame_path), draw_keypoints=False
+        )
 
-        # Overlay behavior prediction labels over the bounding boxes
-        image_id = frame_idx + 1
-        annotations = [ann for ann in coco_data.get("annotations", []) if ann.get("image_id") == image_id]
+        # Overlay behavior prediction labels over the same source image.
+        annotations = self._annotations_for_frame(coco_data, frame_idx, frame_path)
 
         for ann in annotations:
-            bbox = ann.get("bbox", [])
-            pred_label = ann.get("predicted_behavior", "Feeding")  # Fetch predicted behavior label
-            gt_label = ann.get("gt_behavior", "N/A")
-
-            if len(bbox) == 4:
-                x, y, w, h = map(int, bbox)
-                
-                # Display Prediction & Ground Truth badges
-                behavior_text = f"Pred: {pred_label}"
-                cv2.putText(frame, behavior_text, (x, y + h + 18),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
+            draw_prediction_label(
+                frame,
+                ann.get("bbox", []),
+                ann.get("predicted_behavior", "Feeding"),
+            )
 
         return frame
 
@@ -218,22 +191,11 @@ class VideoRenderService:
         """
         Converts a raw MP4 file into an H.264 / AAC web-compatible MP4 using FFmpeg.
         """
-        command = [
-            "ffmpeg",
-            "-y",  # Overwrite output file if exists
-            "-i", str(input_path),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-movflags", "+faststart",  # Optimizes file for fast web streaming
-            str(output_path)
-        ]
-        
         try:
-            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except subprocess.CalledProcessError as e:
-            logger.error(f"FFmpeg conversion failed: {e}")
-            raise RuntimeError(f"Failed to transcode video to web-compatible format: {e}")
+            convert_to_web_mp4(input_path, output_path)
+        except RuntimeError as error:
+            logger.error("FFmpeg conversion failed: %s", error)
+            raise
 
 
 # Singleton instance ready for importation

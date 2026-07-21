@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import os
+from pathlib import Path
 from typing import Dict
 
 import cv2
@@ -10,6 +11,7 @@ import torch
 import yaml
 
 from behavior.models import BehaviorRNN
+from app.backend.services.video_style import draw_pose_annotations, draw_prediction_label, convert_to_web_mp4
 
 
 def _load_model(exp_dir: str, video_to_eval: str, behavior_classes: Dict[str, int]) -> BehaviorRNN:
@@ -169,14 +171,6 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
         clip_offsets[jf.replace(".json", "")] = running_offset
         running_offset += n_frames
 
-    colors = [
-        (0, 255, 0),
-        (255, 0, 0),
-        (0, 0, 255),
-        (0, 255, 255),
-        (255, 0, 255),
-    ]
-
     print(f">>> Generating clips in {out_vid_dir}...")
 
     for json_file in sorted(os.listdir(anns_dir)):
@@ -205,10 +199,11 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
         h, w, _ = sample_img.shape
 
         out_mp4 = os.path.join(out_vid_dir, f"{clip_id}.mp4")
+        raw_mp4 = os.path.join(out_vid_dir, f"{clip_id}_raw.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out_fps = config.get("frames_per_second", 1)
 
-        writer = cv2.VideoWriter(out_mp4, fourcc, out_fps, (w, h))
+        writer = cv2.VideoWriter(raw_mp4, fourcc, out_fps, (w, h))
 
         # Images may use "frame_id" or just "id" depending on source; use fallback
         def _get_frame_id(i):
@@ -234,10 +229,6 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
                 if track_id is None:
                     continue
 
-                x, y, w_box, h_box = map(int, ann["bbox"])
-                color = colors[track_id % len(colors)]
-                cv2.rectangle(frame_img, (x, y), (x + w_box, y + h_box), color, 2)
-
                 pred_label = "Waiting"
                 if track_id in pigs_predictions and frame_abs in pigs_predictions[track_id]:
                     pred_idx = pigs_predictions[track_id][frame_abs]
@@ -246,72 +237,12 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
                     else:
                         pred_label = f"Cls{pred_idx}"
 
+                # Match the web app: green box/ID, red keypoints, cyan skeleton and blue prediction.
+                draw_pose_annotations(frame_img, [ann], draw_keypoints=False)
+                draw_prediction_label(frame_img, ann["bbox"], pred_label)
+
                 gt_label = ann.get("action") or ann.get("behavior") or "N/A"
 
-                text_pred = f"Pred: {pred_label}"
-                text_gt = f"GT: {gt_label}"
-
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale_pred = 0.8
-                font_scale_gt = 0.6
-                thick_pred = 2
-                thick_gt = 1
-
-                (tw_pred, th_pred), _ = cv2.getTextSize(text_pred, font, font_scale_pred, thick_pred)
-                (tw_gt, th_gt), _ = cv2.getTextSize(text_gt, font, font_scale_gt, thick_gt)
-
-                bg_width = max(tw_pred, tw_gt) + 10
-                bg_height = th_pred + th_gt + 15
-
-                cv2.rectangle(
-                    frame_img,
-                    (x, max(0, y - bg_height)),
-                    (x + bg_width, y),
-                    color,
-                    -1,
-                )
-
-                cv2.putText(
-                    frame_img,
-                    text_pred,
-                    (x + 5, max(th_pred + 5, y - th_gt - 10)),
-                    font,
-                    font_scale_pred,
-                    (255, 255, 255),
-                    thick_pred,
-                )
-                cv2.putText(
-                    frame_img,
-                    text_gt,
-                    (x + 5, max(bg_height - 5, y - 5)),
-                    font,
-                    font_scale_gt,
-                    (200, 200, 200),
-                    thick_gt,
-                    1,
-                )
-
-                # Draw Keypoints and Skeleton if requested
-                if draw_kp:
-                    kp_raw = ann.get("keypoints", [])
-                    if kp_raw and len(kp_raw) >= 51:
-                        kp_array = np.array(kp_raw).reshape(-1, 3)
-                        
-                        # 1. Draw Skeleton Lines
-                        for (p1, p2) in skeleton:
-                            # Skeleton indices in YAML are 1-based
-                            idx1, idx2 = p1 - 1, p2 - 1
-                            if idx1 < len(kp_array) and idx2 < len(kp_array):
-                                k1 = kp_array[idx1]
-                                k2 = kp_array[idx2]
-                                if k1[2] > 0 and k2[2] > 0:
-                                    cv2.line(frame_img, (int(k1[0]), int(k1[1])), (int(k2[0]), int(k2[1])), color, 1)
-
-                        # 2. Draw Individual Points
-                        for kp_idx, (kx, ky, kv) in enumerate(kp_array):
-                            if kv > 0:  # COCO: 0=not in image, 1=hidden, 2=visible
-                                cv2.circle(frame_img, (int(kx), int(ky)), 3, color, -1)
-                
                 # Collect log data
                 inference_logs.append({
                     "video": video_to_eval,
@@ -326,6 +257,11 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
             writer.write(frame_img)
 
         writer.release()
+        try:
+            convert_to_web_mp4(Path(raw_mp4), Path(out_mp4))
+        finally:
+            if os.path.exists(raw_mp4):
+                os.remove(raw_mp4)
         print(f"    Saved {out_mp4}")
 
     # 3. Save logs
@@ -357,7 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp", type=str, required=True, help="Experiment folder name in out/results/")
     parser.add_argument("--video", type=str, default="video3", help="Video folder to evaluate (default: video3)")
     parser.add_argument("--inference", action="store_true", help="Run in inference mode (look for RAW/SAM annotations)")
-    parser.add_argument("--draw_kp", action="store_true", help="Draw keypoints on the video")
+    parser.add_argument("--draw_kp", action="store_true", help="Deprecated: keypoints are always drawn to match the web app")
     args = parser.parse_args()
 
     generate_prediction_videos(args.exp, video_to_eval=args.video, draw_kp=args.draw_kp)
