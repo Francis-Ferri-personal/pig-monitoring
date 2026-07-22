@@ -349,7 +349,7 @@ python behavior/train_behavior.py --rnn_type BiLSTM --epochs 80
 Create overlay videos that show model predictions vs ground truth for inspection.
 
 ```bash
-python behavior/generate_videos.py --exp keypoints-BiLSTM-80_epoch --video video3
+python -m behavior/generate_videos.py --exp keypoints-BiLSTM-80_epoch --video video3
 ```
 
 - **Logic**: Uses the `best_model.pt` from the experiment folder to generate predictions frame-by-frame and overlays them on the original frames.

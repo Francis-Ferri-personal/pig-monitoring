@@ -1,0 +1,6 @@
+behavior_classes:
+  Lying: 0
+  Sitting: 1
+  Standing_Walking: 2
+  Feeding: 3
+  Drinking: 4

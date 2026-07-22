@@ -150,12 +150,29 @@ async def upload_video(file: UploadFile = File(...)):
 
 
         # 8. Getting behaviors
-        predictions_output_dir = behavior_service.predict_and_count(
+        csv_path, pigs_predictions = behavior_service.predict_and_count(
             session_id=session_id,
             coco_data=final_coco_with_pose
         )
 
         # 9. Rendering Annotated Videos
+        # Load behavior classes from the backend-specific config to ensure isolation
+        import yaml
+        backend_config_path = Path("/workspace/pig-monitoring/app/backend/config.yaml")
+        behavior_classes = []
+        if backend_config_path.exists():
+            with open(backend_config_path, "r") as f:
+                config = yaml.safe_load(f)
+            # Rebuild the list by index: {Name: ID} -> [Name0, Name1, ...]
+            max_id = max(config["behavior_classes"].values())
+            behavior_names = [None] * (max_id + 1)
+            for name, idx in config["behavior_classes"].items():
+                behavior_names[idx] = name
+            behavior_classes = [name for name in behavior_names if name is not None]
+        else:
+            logger.error("Backend config.yaml not found! Cannot determine behavior classes.")
+            raise FileNotFoundError("Backend config.yaml missing essential class mapping.")
+
         logger.info(f"Rendering output videos for session: {session_id}")
         keypoints_video_path = video_service.generate_pose_video(
             session_id=session_id,
@@ -167,9 +184,10 @@ async def upload_video(file: UploadFile = File(...)):
         behavior_video_path = video_service.generate_behavior_video(
             session_id=session_id,
             coco_data=final_coco_with_pose,
-            predictions_dir=predictions_output_dir,
+            pigs_predictions=pigs_predictions,
             frames_dir=frames_directory,
-            output_dir=UPLOAD_DIR
+            output_dir=UPLOAD_DIR,
+            behavior_classes=behavior_classes
         )
         
         return {

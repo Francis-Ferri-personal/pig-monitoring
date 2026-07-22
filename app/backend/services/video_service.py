@@ -3,7 +3,7 @@ import cv2
 import glob
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 
 from services.video_style import (
     SKELETON_CONNECTIONS,
@@ -32,6 +32,7 @@ class VideoRenderService:
         """
         self.fps = fps
 
+
     def generate_pose_video(
         self,
         session_id: str,
@@ -57,7 +58,9 @@ class VideoRenderService:
         self._build_video_from_frames(
             frames_dir=frames_dir,
             output_video_path=raw_output_path,
-            draw_callback=lambda frame, frame_idx, frame_path: self._draw_pose_overlay(frame, frame_idx, coco_data, frame_path)
+            draw_callback=lambda frame, frame_idx, frame_path: self._draw_pose_overlay(
+                frame, frame_idx, coco_data, frame_path
+            )
         )
 
         # Transcode raw video to standard H.264 format for browser web compatibility
@@ -74,18 +77,20 @@ class VideoRenderService:
         self,
         session_id: str,
         coco_data: Dict[str, Any],
-        predictions_dir: str,
+        pigs_predictions: Dict[int, Dict[int, int]],
         frames_dir: str,
-        output_dir: Path
+        output_dir: Path,
+        behavior_classes: List[str]
     ) -> Path:
         """
-        Generates a video overlay showing BBoxes, Keypoints, Ground Truth, and Behavior Predictions.
+        Generates a video overlay showing BBoxes, Track IDs, and real-time Behavior Predictions frame-by-frame.
 
         :param session_id: Unique session identifier.
         :param coco_data: Dictionary containing COCO-formatted annotations.
-        :param predictions_dir: Directory containing prediction results (e.g., JSON/CSV output).
+        :param pigs_predictions: Map of track predictions per frame {track_id: {frame_idx: class_idx}}.
         :param frames_dir: Directory containing individual frame images.
         :param output_dir: Destination path where the final video will be saved.
+        :param behavior_classes: List of behavior class names in the correct order.
         :return: Path to the web-compatible rendered video.
         """
         raw_output_path = output_dir / f"{session_id}_behavior_raw.mp4"
@@ -97,7 +102,7 @@ class VideoRenderService:
             frames_dir=frames_dir,
             output_video_path=raw_output_path,
             draw_callback=lambda frame, frame_idx, frame_path: self._draw_behavior_overlay(
-                frame, frame_idx, coco_data, predictions_dir, frame_path
+                frame, frame_idx, coco_data, pigs_predictions, frame_path, behavior_classes
             )
         )
 
@@ -110,6 +115,7 @@ class VideoRenderService:
 
         logger.info(f"Behavior video successfully saved at: {final_output_path}")
         return final_output_path
+
 
     def _build_video_from_frames(self, frames_dir: str, output_video_path: Path, draw_callback) -> None:
         """
@@ -158,31 +164,73 @@ class VideoRenderService:
         """Draw pose annotations matched to the actual frame file."""
         return draw_pose_annotations(frame, self._annotations_for_frame(coco_data, frame_idx, frame_path))
 
-
     def _draw_behavior_overlay(
         self,
         frame: cv2.Mat,
         frame_idx: int,
         coco_data: Dict[str, Any],
-        predictions_dir: str,
-        frame_path: str
+        pigs_predictions: Dict[int, Dict[int, int]],
+        frame_path: str,
+        behavior_classes: List[str]
     ) -> cv2.Mat:
         """
-        Draws behavior labels (Ground Truth & Predicted Behaviors) alongside bounding boxes.
+        Draws behavior labels (frame by frame) alongside bounding boxes.
         """
-        # First draw base pose annotations
-        frame = draw_pose_annotations(
-            frame, self._annotations_for_frame(coco_data, frame_idx, frame_path), draw_keypoints=False
-        )
-
-        # Overlay behavior prediction labels over the same source image.
+        # First draw base pose annotations (boxes and ID, without keypoints)
         annotations = self._annotations_for_frame(coco_data, frame_idx, frame_path)
+        frame = draw_pose_annotations(frame, annotations, draw_keypoints=False)
 
+        # Overlay frame-specific behavior prediction labels
         for ann in annotations:
-            draw_prediction_label(
+            track_id = ann.get("track_id", 0)
+            if track_id is None:
+                continue
+            
+            bbox = ann.get("bbox", [])
+            if len(bbox) != 4:
+                continue
+                
+            x, y, w, h = map(int, bbox)
+            
+            # Get the prediction for this specific track and frame
+            pred_label = "Waiting"
+            if track_id in pigs_predictions and frame_idx in pigs_predictions[track_id]:
+                pred_idx = pigs_predictions[track_id][frame_idx]
+                if 0 <= pred_idx < len(behavior_classes):
+                    pred_label = behavior_classes[pred_idx]
+
+            # Draw the prediction label badge
+            from services.video_style import _track_color
+            color = _track_color(track_id)
+            
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.8
+            thickness = 2
+            
+            # Draw the box for the track
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+            
+            # Draw the prediction label background and text
+            text_pred = f"Pred: {pred_label}"
+            (tw, th), _ = cv2.getTextSize(text_pred, font, font_scale, thickness)
+            bg_height = th + 10
+            
+            cv2.rectangle(
                 frame,
-                ann.get("bbox", []),
-                ann.get("predicted_behavior", "Feeding"),
+                (x, max(0, y - bg_height)),
+                (x + tw + 10, y),
+                color,
+                -1,
+            )
+            
+            cv2.putText(
+                frame,
+                text_pred,
+                (x + 5, max(th + 5, y - 5)),
+                font,
+                font_scale,
+                (255, 255, 255),
+                thickness,
             )
 
         return frame
