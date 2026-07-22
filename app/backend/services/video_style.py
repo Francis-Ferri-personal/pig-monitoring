@@ -50,23 +50,25 @@ def _draw_mask(frame: cv2.Mat, segmentation: Any, color: Tuple[int, int, int]) -
 
 
 def draw_pose_annotations(
-    frame: cv2.Mat, annotations: Iterable[Mapping[str, Any]], draw_keypoints: bool = True
+    frame: cv2.Mat, annotations: Iterable[Mapping[str, Any]], draw_keypoints: bool = True, draw_masks: bool = True
 ) -> cv2.Mat:
     """Draw coloured SAM masks, tracking IDs, pig skeletons and keypoints in-place."""
     for annotation in annotations:
         track_id = annotation.get("track_id", annotation.get("id", "N/A"))
         color = _track_color(track_id)
-        _draw_mask(frame, annotation.get("segmentation"), color)
+        
+        if draw_masks:
+            _draw_mask(frame, annotation.get("segmentation"), color)
 
         bbox = annotation.get("bbox", [])
         if len(bbox) == 4:
             x, y, width, height = map(int, bbox)
             cv2.rectangle(frame, (x, y), (x + width, y + height), color, 3)
             label = f"ID: {track_id}"
-            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.85, 2)
             label_top = max(0, y - text_height - 10)
             cv2.rectangle(frame, (x, label_top), (x + text_width + 10, y), color, -1)
-            cv2.putText(frame, label, (x + 5, max(text_height + 2, y - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
+            cv2.putText(frame, label, (x + 5, max(text_height + 2, y - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 0), 2)
 
         if draw_keypoints:
             raw_keypoints = annotation.get("keypoints", [])
@@ -91,15 +93,16 @@ def draw_pose_annotations(
     return frame
 
 
+
 def draw_prediction_label(frame: cv2.Mat, bbox: Sequence[float], prediction: str) -> cv2.Mat:
     """Draw a readable prediction badge below a bounding box."""
     if len(bbox) == 4:
         x, y, width, height = map(int, bbox)
         label = f"Pred: {prediction}"
-        (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.85, 2)
         label_y = min(frame.shape[0] - 4, y + height + text_height + 12)
         cv2.rectangle(frame, (x, label_y - text_height - 8), (x + text_width + 10, label_y + 4), (30, 30, 30), -1)
-        cv2.putText(frame, label, (x + 5, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, PREDICTION_COLOR, 2)
+        cv2.putText(frame, label, (x + 5, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.85, PREDICTION_COLOR, 2)
     return frame
 
 

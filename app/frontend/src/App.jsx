@@ -87,7 +87,6 @@ function App() {
 
     try {
       // To use the real backend, uncomment the following block and comment out the mock logic
-      /*
       const formData = new FormData();
       formData.append('file', file);
       const response = await fetch('http://localhost:8008/upload', {
@@ -101,16 +100,16 @@ function App() {
         keypoints: baseUrl + data.keypoints_url,
         behavior: baseUrl + data.behavior_url
       });
-      */
+      
 
       // Using the mock response for debugging
-      const data = mockResponse;
-      const baseUrl = 'http://localhost:8008';
-      setVideoUrls({
-        original: baseUrl + data.original_url,
-        keypoints: baseUrl + data.keypoints_url,
-        behavior: baseUrl + data.behavior_url
-      });
+      // const data = mockResponse;
+      // const baseUrl = 'http://localhost:8008';
+      // setVideoUrls({
+      //   original: baseUrl + data.original_url,
+      //   keypoints: baseUrl + data.keypoints_url,
+      //   behavior: baseUrl + data.behavior_url
+      // });
       setActiveView('original');
     } catch (error) {
       console.error('Error processing video:', error);
@@ -221,24 +220,24 @@ const handleSeeked = (e) => {
       <div className="player-area">
         <div className="sidebar">
           <div className="sidebar-title">Views</div>
-          <button 
-            className={`view-btn ${activeView === 'original' ? 'active' : ''}`}
-            onClick={() => setActiveView('original')}
-          >
-            Video original
-          </button>
-          <button 
-            className={`view-btn ${activeView === 'keypoints' ? 'active' : ''}`}
-            onClick={() => setActiveView('keypoints')}
-          >
-            Video con keypoints
-          </button>
-          <button 
-            className={`view-btn ${activeView === 'behavior' ? 'active' : ''}`}
-            onClick={() => setActiveView('behavior')}
-          >
-            Behavior
-          </button>
+           <button 
+             className={`view-btn ${activeView === 'original' ? 'active' : ''}`}
+             onClick={() => setActiveView('original')}
+           >
+             Video Original
+           </button>
+           <button 
+             className={`view-btn ${activeView === 'keypoints' ? 'active' : ''}`}
+             onClick={() => setActiveView('keypoints')}
+           >
+             Keypoints
+           </button>
+           <button 
+             className={`view-btn ${activeView === 'behavior' ? 'active' : ''}`}
+             onClick={() => setActiveView('behavior')}
+           >
+             Behavior
+           </button>
           
           <button 
             className="process-btn" 

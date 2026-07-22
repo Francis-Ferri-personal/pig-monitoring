@@ -178,7 +178,7 @@ class VideoRenderService:
         """
         # First draw base pose annotations (boxes and ID, without keypoints)
         annotations = self._annotations_for_frame(coco_data, frame_idx, frame_path)
-        frame = draw_pose_annotations(frame, annotations, draw_keypoints=False)
+        frame = draw_pose_annotations(frame, annotations, draw_keypoints=False, draw_masks=False)
 
         # Overlay frame-specific behavior prediction labels
         for ann in annotations:
