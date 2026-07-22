@@ -19,6 +19,7 @@ function App() {
   const originalRef = useRef(null);
   const keypointsRef = useRef(null);
   const behaviorRef = useRef(null);
+  const isSyncingRef = useRef(false);
   
   const fileInputRef = useRef(null);
 
@@ -71,19 +72,39 @@ function App() {
     if (!file) return;
     setProcessing(true);
     
-    const formData = new FormData();
-    formData.append('file', file);
-    
+    // Mock response for debugging
+    const mockResponse = {
+      "session_id": "78e1fd8d-d833-408f-ada8-ac5c605ab08a",
+      "video_name": "debug_video",
+      "original_url": "/uploads/78e1fd8d-d833-408f-ada8-ac5c605ab08a_web.mp4",
+      "keypoints_url": "/uploads/78e1fd8d-d833-408f-ada8-ac5c605ab08a_pose.mp4",
+      "behavior_url": "/uploads/78e1fd8d-d833-408f-ada8-ac5c605ab08a_behavior.mp4",
+      "message": "Upload successful. Video is ready for playback."
+    };
+
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
     try {
-      // Assuming backend is running on localhost:8008
+      // To use the real backend, uncomment the following block and comment out the mock logic
+      /*
+      const formData = new FormData();
+      formData.append('file', file);
       const response = await fetch('http://localhost:8008/upload', {
         method: 'POST',
         body: formData,
       });
-      
       const data = await response.json();
-      
-      // Update URLs with the response from the backend
+      const baseUrl = 'http://localhost:8008';
+      setVideoUrls({
+        original: baseUrl + data.original_url,
+        keypoints: baseUrl + data.keypoints_url,
+        behavior: baseUrl + data.behavior_url
+      });
+      */
+
+      // Using the mock response for debugging
+      const data = mockResponse;
       const baseUrl = 'http://localhost:8008';
       setVideoUrls({
         original: baseUrl + data.original_url,
@@ -114,50 +135,52 @@ function App() {
     
     if (oldVideo && newVideo && oldVideo !== newVideo && !isNaN(oldVideo.currentTime)) {
       newVideo.currentTime = oldVideo.currentTime;
-      if (!oldVideo.paused) {
-        newVideo.play().catch(e => console.error("Playback failed:", e));
-      } else {
-        newVideo.pause();
-      }
     }
     previousViewRef.current = activeView;
   }, [activeView]);
 
   // Sync play/pause events across all videos so they stay perfectly in sync if they are all loaded
   const handlePlay = (e) => {
-    const sourceView = e.target.dataset.view;
-    const time = e.target.currentTime;
-    
-    [originalRef, keypointsRef, behaviorRef].forEach(ref => {
-      if (ref.current && ref.current.dataset.view !== sourceView) {
-        ref.current.currentTime = time;
-        ref.current.play().catch(err => console.log(err));
-      }
-    });
-  };
+  const sourceView = e.target.dataset.view;
+  if (sourceView !== activeView) return; // ignora eventos de videos ocultos/programáticos
+  const time = e.target.currentTime;
 
-  const handlePause = (e) => {
-    const sourceView = e.target.dataset.view;
-    const time = e.target.currentTime;
-    
-    [originalRef, keypointsRef, behaviorRef].forEach(ref => {
-      if (ref.current && ref.current.dataset.view !== sourceView) {
-        ref.current.currentTime = time;
-        ref.current.pause();
-      }
-    });
-  };
-  
-  const handleSeeked = (e) => {
-    const sourceView = e.target.dataset.view;
-    const time = e.target.currentTime;
-    
-    [originalRef, keypointsRef, behaviorRef].forEach(ref => {
-      if (ref.current && ref.current.dataset.view !== sourceView) {
+  [originalRef, keypointsRef, behaviorRef].forEach(ref => {
+    if (ref.current && ref.current.dataset.view !== sourceView) {
+      if (Math.abs(ref.current.currentTime - time) > 0.05) {
         ref.current.currentTime = time;
       }
-    });
-  };
+      ref.current.play().catch(() => {});
+    }
+  });
+};
+
+const handlePause = (e) => {
+  const sourceView = e.target.dataset.view;
+  if (sourceView !== activeView) return;
+  const time = e.target.currentTime;
+
+  [originalRef, keypointsRef, behaviorRef].forEach(ref => {
+    if (ref.current && ref.current.dataset.view !== sourceView) {
+      ref.current.currentTime = time;
+      ref.current.pause();
+    }
+  });
+};
+
+const handleSeeked = (e) => {
+  const sourceView = e.target.dataset.view;
+  if (sourceView !== activeView) return;
+  const time = e.target.currentTime;
+
+  [originalRef, keypointsRef, behaviorRef].forEach(ref => {
+    if (ref.current && ref.current.dataset.view !== sourceView) {
+      if (Math.abs(ref.current.currentTime - time) > 0.05) {
+        ref.current.currentTime = time;
+      }
+    }
+  });
+};
 
   return (
     <div className="container">
@@ -235,36 +258,36 @@ function App() {
           ) : (
             <>
               {/* Render all 3 videos but only show the active one. */}
-              <video
-                ref={originalRef}
-                src={videoUrls.original}
-                className={activeView === 'original' ? '' : 'hidden-video'}
-                controls={activeView === 'original'}
-                onPlay={handlePlay}
-                onPause={handlePause}
-                onSeeked={handleSeeked}
-                data-view="original"
-              />
-              <video
-                ref={keypointsRef}
-                src={videoUrls.keypoints}
-                className={activeView === 'keypoints' ? '' : 'hidden-video'}
-                controls={activeView === 'keypoints'}
-                onPlay={handlePlay}
-                onPause={handlePause}
-                onSeeked={handleSeeked}
-                data-view="keypoints"
-              />
-              <video
-                ref={behaviorRef}
-                src={videoUrls.behavior}
-                className={activeView === 'behavior' ? '' : 'hidden-video'}
-                controls={activeView === 'behavior'}
-                onPlay={handlePlay}
-                onPause={handlePause}
-                onSeeked={handleSeeked}
-                data-view="behavior"
-              />
+               <video
+                 ref={originalRef}
+                 src={videoUrls.original}
+                 className={activeView === 'original' ? '' : 'hidden-video'}
+                 controls={true}
+                 onPlay={handlePlay}
+                 onPause={handlePause}
+                 onSeeked={handleSeeked}
+                 data-view="original"
+               />
+               <video
+                 ref={keypointsRef}
+                 src={videoUrls.keypoints}
+                 className={activeView === 'keypoints' ? '' : 'hidden-video'}
+                 controls={true}
+                 onPlay={handlePlay}
+                 onPause={handlePause}
+                 onSeeked={handleSeeked}
+                 data-view="keypoints"
+               />
+               <video
+                 ref={behaviorRef}
+                 src={videoUrls.behavior}
+                 className={activeView === 'behavior' ? '' : 'hidden-video'}
+                 controls={true}
+                 onPlay={handlePlay}
+                 onPause={handlePause}
+                 onSeeked={handleSeeked}
+                 data-view="behavior"
+               />
             </>
           )}
         </div>
