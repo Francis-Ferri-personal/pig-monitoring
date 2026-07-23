@@ -80,7 +80,7 @@ class VideoRenderService:
         pigs_predictions: Dict[int, Dict[int, int]],
         frames_dir: str,
         output_dir: Path,
-        behavior_classes: List[str]
+        behavior_cla`: `ss: List[str]
     ) -> Path:
         """
         Generates a video overlay showing BBoxes, Track IDs, and real-time Behavior Predictions frame-by-frame.
@@ -95,6 +95,11 @@ class VideoRenderService:
         """
         raw_output_path = output_dir / f"{session_id}_behavior_raw.mp4"
         final_output_path = output_dir / f"{session_id}_behavior.mp4"
+        log_file_path = output_dir / f"{session_id}_behavior_log.csv"
+
+        # Initialize log file with header
+        with open(log_file_path, 'w') as f:
+            f.write("pig_id,frame,behavior\n")
 
         logger.info(f"Starting Behavior video rendering for session: {session_id}")
 
@@ -102,7 +107,7 @@ class VideoRenderService:
             frames_dir=frames_dir,
             output_video_path=raw_output_path,
             draw_callback=lambda frame, frame_idx, frame_path: self._draw_behavior_overlay(
-                frame, frame_idx, coco_data, pigs_predictions, frame_path, behavior_classes
+                frame, frame_idx, coco_data, pigs_predictions, frame_path, behavior_classes, session_id, log_file_path
             )
         )
 
@@ -171,14 +176,17 @@ class VideoRenderService:
         coco_data: Dict[str, Any],
         pigs_predictions: Dict[int, Dict[int, int]],
         frame_path: str,
-        behavior_classes: List[str]
+        behavior_classes: List[str],
+        session_id: str,
+        log_file_path: Path
     ) -> cv2.Mat:
         """
         Draws behavior labels (frame by frame) alongside bounding boxes.
+        Also prints to console and logs to a CSV file.
         """
         # First draw base pose annotations (boxes and ID, without keypoints)
         annotations = self._annotations_for_frame(coco_data, frame_idx, frame_path)
-        frame = draw_pose_annotations(frame, annotations, draw_keypoints=False, draw_masks=False)
+        frame = draw_pose_annotations(frame, annotations, draw_keypoints=False)
 
         # Overlay frame-specific behavior prediction labels
         for ann in annotations:
@@ -198,6 +206,12 @@ class VideoRenderService:
                 pred_idx = pigs_predictions[track_id][frame_idx]
                 if 0 <= pred_idx < len(behavior_classes):
                     pred_label = behavior_classes[pred_idx]
+            
+            # LOGGING: Print to console and write to CSV
+            log_entry = f"{track_id},{frame_idx},{pred_label}"
+            print(log_entry)
+            with open(log_file_path, 'a') as f:
+                f.write(log_entry + "\n")
 
             # Draw the prediction label badge
             from services.video_style import _track_color
@@ -234,6 +248,7 @@ class VideoRenderService:
             )
 
         return frame
+
 
     def _convert_to_web_mp4(self, input_path: Path, output_path: Path) -> None:
         """
