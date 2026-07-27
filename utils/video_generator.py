@@ -17,6 +17,36 @@ from app.backend.services.video_style import convert_to_web_mp4
 # Import the visualization function
 from viz_utils import visualize_coco_frame
 
+
+def draw_frame_number(frame, frame_idx, clip_id=None):
+    """Overlay the frame index (and optional clip id) in the top-left corner."""
+    label = f"Frame: {frame_idx}" if clip_id is None else f"Clip {clip_id} | Frame: {frame_idx}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    thickness = 2
+    (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+    pad = 8
+    x, y = 10, 10
+    cv2.rectangle(
+        frame,
+        (x, y),
+        (x + tw + 2 * pad, y + th + baseline + 2 * pad),
+        (0, 0, 0),
+        -1,
+    )
+    cv2.putText(
+        frame,
+        label,
+        (x + pad, y + pad + th),
+        font,
+        font_scale,
+        (255, 255, 255),
+        thickness,
+        cv2.LINE_AA,
+    )
+    return frame
+
+
 def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args, mode):
     """Processes a single clip and generates a video (raw or annotated)."""
     video_dir = video_name
@@ -84,6 +114,8 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
         
         if vis_frame is None:
             continue
+
+        draw_frame_number(vis_frame, frame_idx, clip_id=clip_id)
 
         h, w = vis_frame.shape[:2]
         
