@@ -111,6 +111,86 @@ def get_centroid(bbox):
     x, y, w, h = bbox
     return (x + w / 2.0, y + h / 2.0)
 
+
+def get_last_seen_bboxes(annotations, images_sorted, track_ids):
+    """
+    Return the most recent bbox for each requested track_id in the clip.
+    Used as a fallback when a mapped pig disappears before the clip boundary.
+    """
+    if not track_ids:
+        return {}
+    img_order = {img["id"]: idx for idx, img in enumerate(images_sorted)}
+    last_seen = {}
+    for ann in annotations:
+        tid = ann.get("track_id")
+        if tid not in track_ids:
+            continue
+        img_id = ann.get("image_id")
+        if img_id not in img_order:
+            continue
+        order = img_order[img_id]
+        if tid not in last_seen or order > last_seen[tid][0]:
+            last_seen[tid] = (order, ann["bbox"])
+    return {tid: bbox for tid, (_, bbox) in last_seen.items()}
+
+
+def merge_manual_into_auto(auto_remap, manual_remap):
+    """
+    Merge a partial manual remap into an automatic master→tracker map.
+
+    Values are absolute source tracker IDs, except when the manual remap is a
+    closed ID permutation that would wipe masters outside the fix. In that case
+    it is treated as a swap of the *displayed* master IDs (what you see in the
+    refined video), e.g. {"0":"3","3":"0"} swaps the trackers currently held by
+    masters 0 and 3 without destroying other mappings.
+    """
+    manual_remap = {str(k): ("" if v == "" else str(v)) for k, v in manual_remap.items()}
+    auto_remap = {str(k): ("" if v == "" else str(v)) for k, v in auto_remap.items()}
+
+    keys = set(manual_remap.keys())
+    vals = {v for v in manual_remap.values() if v != ""}
+
+    would_clear = set()
+    for m_id, t_id in manual_remap.items():
+        if t_id == "":
+            continue
+        for other_m, other_t in auto_remap.items():
+            if other_t == t_id and other_m != m_id and other_m not in keys:
+                would_clear.add(other_m)
+
+    # Closed permutation that would destroy unrelated masters → displayed-ID swap.
+    if would_clear and keys == vals:
+        print(
+            f"    [!] Interpreting {manual_remap} as master-ID swap "
+            f"(absolute merge would clear masters {sorted(would_clear, key=int)})"
+        )
+        moving = {m: auto_remap.get(m, "") for m in keys}
+        merged = auto_remap.copy()
+        for old_m, new_m in manual_remap.items():
+            merged[new_m] = moving[old_m]
+        return merged
+
+    merged = auto_remap.copy()
+    for m_id, t_id in manual_remap.items():
+        if t_id != "":
+            for other_m, other_t in list(merged.items()):
+                if other_t == t_id and other_m != m_id:
+                    merged[other_m] = ""
+        merged[m_id] = t_id
+    return merged
+
+
+def apply_swap_ids(auto_remap, swap_ids):
+    """Swap tracker assignments between the listed master IDs (pairwise or cycle)."""
+    ids = [str(x) for x in swap_ids]
+    if len(ids) < 2:
+        return auto_remap.copy()
+    merged = {str(k): ("" if v == "" else str(v)) for k, v in auto_remap.items()}
+    current = [merged.get(m, "") for m in ids]
+    for i, m in enumerate(ids):
+        merged[m] = current[(i + 1) % len(current)]
+    return merged
+
 def match_pigs_hungarian(prev_averaged_pigs, curr_averaged_pigs, max_distance_threshold=250.0):
     """
     Solves the optimal bipartite matching between previous canonical IDs and
@@ -345,15 +425,16 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
             if not isinstance(fix_data, list):
                 fix_data = [{"frame_start": 0, "frame_end": last_frame_id, "remap": fix_data}]
             
-            # Extract all steps that are not remap steps (e.g., delete, reintroduce, etc.)
+            # Extract remap/swap steps vs other ops (delete, reintroduce, etc.)
             non_remap_steps = []
             manual_remap_steps = []
             for step in fix_data:
-                if isinstance(step, dict):
-                    if 'remap' in step:
-                        manual_remap_steps.append(step)
-                    else:
-                        non_remap_steps.append(step)
+                if not isinstance(step, dict):
+                    continue
+                if 'remap' in step or 'swap_ids' in step:
+                    manual_remap_steps.append(step)
+                else:
+                    non_remap_steps.append(step)
             
             # Start with the whole clip mapped to auto_remap
             intervals = [(0, last_frame_id, auto_remap.copy())]
@@ -361,7 +442,6 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
             for step in manual_remap_steps:
                 fs = step.get('frame_start', 0)
                 fe = step.get('frame_end', last_frame_id)
-                manual_remap = step['remap']
                 
                 # Split intervals at fs
                 new_intervals = []
@@ -383,18 +463,15 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
                         new_intervals.append((s, e, r))
                 intervals = new_intervals
                 
-                # Apply manual_remap to any intervals inside [fs, fe]
+                # Apply manual remap/swap to any intervals inside [fs, fe]
                 for i in range(len(intervals)):
                     s, e, r = intervals[i]
                     if fs <= s and e <= fe:
-                        # Merge manual_remap into r
                         merged_r = r.copy()
-                        for m_id, t_id in manual_remap.items():
-                            # Remove other master ID assignments to this tracker ID to avoid collision
-                            for other_m, other_t in list(merged_r.items()):
-                                if other_t == t_id and other_m != m_id:
-                                    merged_r[other_m] = ""
-                            merged_r[m_id] = t_id
+                        if 'swap_ids' in step:
+                            merged_r = apply_swap_ids(merged_r, step['swap_ids'])
+                        if 'remap' in step:
+                            merged_r = merge_manual_into_auto(merged_r, step['remap'])
                         intervals[i] = (s, e, merged_r)
             
             # Build the current_remap_list
@@ -434,6 +511,19 @@ def generate_video_mapping(video_dir, source_ann_dir="data/annotations/sam", n_f
                     inverse_remap[int(v)] = int(k)
             except (ValueError, TypeError):
                 continue
+
+        # If a mapped pig vanished before the clip end (common after mid-clip ID swaps),
+        # fall back to its last seen bbox so the next clip still has an anchor.
+        needed_trackers = set(inverse_remap.keys())
+        missing_trackers = needed_trackers - set(averaged_last_pigs.keys())
+        if missing_trackers:
+            last_seen = get_last_seen_bboxes(annotations, images_sorted, missing_trackers)
+            if last_seen:
+                print(
+                    f"  Clip {clip_name}: Anchor fallback for trackers missing at boundary: "
+                    f"{sorted(last_seen.keys())}"
+                )
+                averaged_last_pigs.update(last_seen)
 
         for tracker_id, avg_bbox in averaged_last_pigs.items():
             if tracker_id in inverse_remap:
