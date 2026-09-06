@@ -54,15 +54,13 @@ def worker_task(args):
             
         mask = mask_utils.decode(ann['segmentation'])
         
-        if len(mask.shape) == 2:
-            mask_3d = cv2.merge([mask, mask, mask])
-        else:
-            mask_3d = mask
+        if len(mask.shape) == 3:
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
         
-        if mask_3d.shape[:2] != (h_img, w_img):
-            mask_3d = cv2.resize(mask_3d, (w_img, h_img), interpolation=cv2.INTER_NEAREST)
-            
-        isolated = cv2.bitwise_and(img, img, mask=mask_3d)
+        if mask.shape[:2] != (h_img, w_img):
+            mask = cv2.resize(mask, (w_img, h_img), interpolation=cv2.INTER_NEAREST)
+        
+        isolated = cv2.bitwise_and(img, img, mask=mask)
         
         bbox = ann['bbox'] 
         x_bb, y_bb, w_bb, h_bb = bbox
@@ -234,5 +232,5 @@ def main():
 
     print("\n>>> ALL KEYPOINTS GENERATED.")
 
-if __name__ == "__main__':
+if __name__ == "__main__":
     main()

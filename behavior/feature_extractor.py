@@ -209,6 +209,7 @@ def extract_features(
     overwrite: bool = False,
     target_video: Optional[str] = None,
     target_clip: Optional[str] = None,
+    all_tracks: bool = False,
 ) -> None:
     """
     Extract embeddings + bbox geometry + motion features from behavior-labeled COCO JSONs.
@@ -280,7 +281,7 @@ def extract_features(
                 track_id = ann.get("track_id")
                 if track_id is None:
                     continue
-                if track_id not in ALLOWED_TRACK_IDS:
+                if not all_tracks and track_id not in ALLOWED_TRACK_IDS:
                     # Skip any track_id outside the expected 5 pigs
                     continue
 
@@ -500,6 +501,7 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .npz files")
     parser.add_argument("--video", type=str, help="Process only a specific video")
     parser.add_argument("--clip", type=str, help="Process only a specific clip")
+    parser.add_argument("--all_tracks", action="store_true", help="Process all track IDs, not just 0-4")
 
     args = parser.parse_args()
 
@@ -536,5 +538,6 @@ if __name__ == "__main__":
         overwrite=args.overwrite,
         target_video=args.video,
         target_clip=args.clip,
+        all_tracks=args.all_tracks,
     )
 

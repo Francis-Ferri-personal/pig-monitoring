@@ -1,5 +1,6 @@
 import argparse
 import csv
+import hashlib
 import json
 import os
 from typing import Dict
@@ -141,20 +142,24 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
     out_vid_dir = os.path.join(exp_dir, "videos", video_to_eval)
     os.makedirs(out_vid_dir, exist_ok=True)
 
-    # Prefer the "behavior" annotations, but fall back to "refined" or "sam" if needed
+    # Prefer the "behavior" annotations, but fall back to "pose", "refined" or "sam" if needed
     anns_dir = os.path.join("data", "annotations", "behavior", video_to_eval)
     if not os.path.exists(anns_dir):
+        pose_alt = os.path.join("data", "annotations", "pose", video_to_eval)
         alt = os.path.join("data", "annotations", "refined", video_to_eval)
         sam_alt = os.path.join("data", "annotations", "sam", video_to_eval)
         
-        if os.path.exists(alt):
+        if os.path.exists(pose_alt):
+            print(f"Using pose annotations at: {pose_alt}")
+            anns_dir = pose_alt
+        elif os.path.exists(alt):
             print(f"Using refined annotations at: {alt}")
             anns_dir = alt
         elif os.path.exists(sam_alt):
             print(f"Using raw SAM annotations at: {sam_alt}")
             anns_dir = sam_alt
         else:
-            raise FileNotFoundError(f"Annotations directory not found for {video_to_eval}: tried behavior, refined, and sam folders.")
+            raise FileNotFoundError(f"Annotations directory not found for {video_to_eval}: tried behavior, pose, refined, and sam folders.")
     frames_dir = os.path.join("data", "images", "frames", video_to_eval)
 
     # Build global frame offset per clip (must match order used in feature_extractor)
@@ -176,6 +181,17 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
         (0, 255, 255),
         (255, 0, 255),
     ]
+
+    def _track_color(track_id: int) -> tuple:
+        """Deterministic random color per track id (stable across frames)."""
+        h = hashlib.md5(str(track_id).encode()).hexdigest()
+        r = int(h[0:2], 16)
+        g = int(h[2:4], 16)
+        b = int(h[4:6], 16)
+        # Avoid colors too dark to be visible
+        if r < 60 and g < 60 and b < 60:
+            r = (r + 120) % 256
+        return (b, g, r)
 
     print(f">>> Generating clips in {out_vid_dir}...")
 
@@ -235,7 +251,7 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
                     continue
 
                 x, y, w_box, h_box = map(int, ann["bbox"])
-                color = colors[track_id % len(colors)]
+                color = _track_color(track_id)
                 cv2.rectangle(frame_img, (x, y), (x + w_box, y + h_box), color, 2)
 
                 pred_label = "Waiting"
@@ -252,9 +268,9 @@ def generate_prediction_videos(exp_name: str, video_to_eval: str = "video3", dra
                 text_gt = f"GT: {gt_label}"
 
                 font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale_pred = 0.8
-                font_scale_gt = 0.6
-                thick_pred = 2
+                font_scale_pred = 0.4
+                font_scale_gt = 0.35
+                thick_pred = 1
                 thick_gt = 1
 
                 (tw_pred, th_pred), _ = cv2.getTextSize(text_pred, font, font_scale_pred, thick_pred)

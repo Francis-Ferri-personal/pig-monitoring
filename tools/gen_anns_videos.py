@@ -31,9 +31,10 @@ def get_video_id(dir_name):
     # Generate a consistent ID in the range [1000, 9999]
     return int(hashlib.md5(dir_name.encode()).hexdigest(), 16) % 9000 + 1000
 
-def generate_annotations(prompt_text="pig"):
+def generate_annotations(prompt_text="pig", video_filter=None):
     """
     Processes all videos and their clips found in data/images/frames_masked.
+    If video_filter is provided, only processes the videos whose name matches.
     """
     # 1. Initialize predictor once
     print(">>> Initializing SAM 3 Predictor...")
@@ -46,11 +47,16 @@ def generate_annotations(prompt_text="pig"):
         return
 
     # 2. Find all video directories
-    video_dirs = sorted([d for d in os.listdir(masked_base_root) 
-                        if os.path.isdir(os.path.join(masked_base_root, d))])
+    all_video_dirs = sorted([d for d in os.listdir(masked_base_root) 
+                            if os.path.isdir(os.path.join(masked_base_root, d))])
+    
+    if video_filter:
+        video_dirs = [d for d in all_video_dirs if d in video_filter]
+    else:
+        video_dirs = all_video_dirs
     
     if not video_dirs:
-        print("No video directories found starting with 'video' in data/images/frames_masked.")
+        print("No video directories found matching the filter in data/images/frames_masked.")
         return
 
     print(f">>> Found {len(video_dirs)} videos: {', '.join(video_dirs)}")
@@ -170,6 +176,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Generate COCO annotations for all available videos and clips.")
     parser.add_argument("--prompt", type=str, default="pig", help="Text prompt for SAM 3 (default: 'pig')")
+    parser.add_argument("--video", nargs="+", default=None, help="Process only the specified video folder name(s).")
     
     args = parser.parse_args()
-    generate_annotations(prompt_text=args.prompt)
+    generate_annotations(prompt_text=args.prompt, video_filter=set(args.video) if args.video else None)

@@ -176,6 +176,7 @@ To override the automatic mapper, create a file at `data/annotations/remappings/
     "05": { "0": "3", "1": "4" }
 }
 ```
+*`remap` uses absolute source tracker IDs: `{ MASTER_ID: TRACKER_ID }`.*
 
 **Option B: Range-based mappings (for ID switches within a clip)**
 ```json
@@ -195,6 +196,24 @@ To override the automatic mapper, create a file at `data/annotations/remappings/
 }
 ```
 *Note: The mapper uses the **last range** of a clip as the anchor for the next clip's matching process.*
+
+**Option C: `swap_ids` (not the same as `remap`)**
+Use this when the auto map is mostly correct but two (or more) **displayed master IDs** in the refined video are swapped. It exchanges the tracker assignments currently held by those masters; it does **not** assign raw pose/SAM tracker IDs.
+
+```json
+{
+    "08": [
+        {
+            "swap_ids": ["0", "3"]
+        }
+    ]
+}
+```
+
+- `remap`: `{ "0": "3" }` means master `0` ← source tracker `3`.
+- `swap_ids`: `["0", "3"]` means “whatever pig is currently labeled 0 and 3, swap those labels.”
+- You can combine them in one step, or limit either with `frame_start` / `frame_end`.
+- A closed `remap` like `{ "0": "3", "3": "0" }` that would wipe other masters is also auto-interpreted as a master-ID swap.
 
 ---
 
