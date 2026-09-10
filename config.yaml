@@ -2,8 +2,9 @@
 clip_duration_minutes: 3
 videos_folder: "data/videos/raw"
 clips_folder: "data/videos/clips"
+clips_masked_folder: "data/videos/clips_masked"
 
-# Clip splitting settings (to frames)
+# Clip splitting settings (to frames) - only needed if using frame extraction
 frames_per_second: 1
 frames_folder: "data/images/frames"
 

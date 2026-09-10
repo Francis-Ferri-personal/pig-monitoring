@@ -70,6 +70,8 @@ cd ..
 
 ## Workflow
 
+> **Video-based processing**: The pipeline works on **video clips** directly instead of individual frames. Frame extraction is **not** required: `tools/gen_anns_videos.py` applies the static mask per frame **in memory** while reading the clips, so no `clips_masked` videos, masked frame dumps, or per-frame files are produced.
+
 ### Step 1: Split Videos into Clips
 Use the `utils/video-splitter.py` script to batch-process raw videos into shorter segments for easier analysis.
 
@@ -83,46 +85,43 @@ python utils/video-splitter.py [--resume | --skip-existing]
 - **Output**: Creates a subfolder for each original video in `clips_folder` (default: `data/videos/clips`) containing the numbered clips (e.g., `01.mp4`).
 - **Checkpoint**: If you pass the `--resume` (or `--skip-existing`) flag, it will skip processing any videos that already have output clips in the clips folder.
 
-### Step 2: Extract Frames from Clips
-Use the `utils/clip-splitter.py` script to extract individual frames from the previously generated clips.
-
-```bash
-python utils/clip-splitter.py [--resume | --skip-existing]
-```
-
-**How it works:**
-- **Input**: Processes all `.mp4` clips found in `clips_folder` (default: `data/videos/clips`).
-- **Processing**: Extracts frames at a rate specified by `frames_per_second` in `config.yaml`.
-- **Output**: Generates images in `frames_folder` (default: `data/images/frames`), maintaining a folder structure that matches the video and clip names (e.g., `data/images/frames/Video_01/01/00000.png`).
-- **Checkpoint**: If you pass the `--resume` (or `--skip-existing`) flag, it will skip extracting any clips that already have extracted frame images.
-
-### Step 3: Apply Mask to Frames
-Use the `utils/apply_mask.py` script to apply a static mask to all extracted frames. This is useful for obscuring areas of the video that are not relevant to the monitoring task.
-
-```bash
-python utils/apply_mask.py --mask data/images/mask.png --input data/images/frames --output data/images/frames_masked [--resume]
-```
-
-**How it works:**
-- **Input**: Processes all images found in the `--input` directory (default: `data/images/frames`).
-- **Processing**: Applies the bitwise AND operation between the frame and the `--mask` PNG file. Areas that are black in the mask will become black in the output frames.
-- **Output**: Generates masked images in the `--output` directory (default: `data/images/frames_masked`), maintaining the original subfolder structure.
-- **Checkpoint**: If you pass the `--resume` flag, it will skip processing any frames that already have a masked output.
-
-### Step 4: Batch Annotation Generation (BBoxes & Tracking)
+### Step 3: Batch Annotation Generation (BBoxes & Tracking)
 Use the `tools/gen_anns_videos.py` script to automatically detect and track pigs using SAM 3. This will generate the initial bounding boxes and segmentation masks.
 
 ```bash
 python tools/gen_anns_videos.py --prompt "pig"
 ```
 
-**How it works:**
-- **Input**: Processes all images in `data/images/frames_masked/`.
-- **Processing**: Uses SAM 3 to detect pigs based on the `--prompt` and tracks them across frames in each clip.
-- **Output**: Generates COCO-compliant JSON files in `data/annotations/sam/{video_dir}/{clip_id}.json`.
-- **Automatic Resume**: Skips clips that already have an annotation file.
+**Test a single clip** (fast iteration):
+```bash
+# Single video, all its clips
+python tools/gen_anns_videos.py --video May_25_01
+# Single video + single clip
+python tools/gen_anns_videos.py --video May_25_01 --clip 01
+```
 
-### Step 5: Pose Estimation (Keypoints)
+**Arguments:**
+- `--prompt`: Text prompt for SAM 3 (default: `pig`).
+- `--video`: Process only the specified video folder name (e.g., `May_25_01`).
+- `--clip`: Process only the specified clip number (e.g., `01`; requires `--video`).
+- `--mask`: Static mask PNG (default: `data/images/mask.png`).
+- `--gpus`: GPU ID(s) for SAM 3 (default: a **single GPU**; use `--gpus 0 1` for multi-GPU).
+
+**How it works:**
+- **Input**: Reads the raw clips directly from `data/videos/clips/{video}/{clip}.mp4`.
+- **Masking**: Applies the static mask **in memory** to every frame on-the-fly and passes the frames to SAM 3 as PIL images. Nothing is written to disk.
+- **Processing**: Uses SAM 3 to detect pigs from the `--prompt` and tracks them across **all frames** of the clip (annotating at the clip's original FPS, e.g. all 5 fps frames).
+- **Output**: Generates COCO-compliant JSON files in `data/annotations/sam/{video}/{clip}.json`. Video IDs are assigned sequentially (`0, 1, 2, ...`) following the natural order of the video folders.
+- **Ordering & Progress**: Videos and clips are processed in natural order (`video1, video2, video10`).
+- **Automatic Resume**: Skips clips that already have an annotation file and keeps the image/annotation ID offsets consistent.
+
+
+
+
+
+# TODO: Update next steps
+
+### Step 4: Pose Estimation (Keypoints)
 Once you have the SAM annotations, you can generate pose estimations (keypoints) for each detected pig using MMPose.
 
 ```bash
@@ -137,7 +136,7 @@ python tools/gen_keypoint_anns.py --device cuda:1 --batch-size 32
 - **Processing**: For each pig, it masks the background and runs **MMPose** inference. 
 - **Output**: Generates new COCO-compliant JSON files in `data/annotations/pose/` including `keypoints` and `skeleton` metadata.
 
-### Step 6: Refinement Process
+### Step 5: Refinement Process
 The refinement process ensures that tracks are consistent across clips and erroneous detections are removed. This process operates on the `data/annotations/refined/` directory.
 
 **🚀 Standard Pipeline for New Videos**
@@ -316,7 +315,7 @@ python utils/excel_to_behavior.py
 
 ---
 
-### Step 7: Behavior Labeling
+### Step 6: Behavior Labeling
 Integrate manual behavior annotations from a CSV file into the refined dataset.
 
 ```bash
@@ -328,7 +327,7 @@ python behavior/add_behavior_labels.py
 - **Processing**: Copies `data/annotations/refined` to `data/annotations/behavior`. Sets a default action (**Lying**) and applies specific labels from the CSV.
 - **Output**: COCO JSONs in `data/annotations/behavior/` with a new `"action"` field.
 
-### Step 8: Feature Extraction (Training & Inference)
+### Step 7: Feature Extraction (Training & Inference)
 Convert annotations into compact numerical tensors (NPZ). This is required both for training the model and for running inference on new videos. To maintain compatibility with the LSTM model (which expects 563 features), the standard extraction include visual embeddings, geometry, and keypoints.
 
 ```bash
@@ -352,7 +351,7 @@ python behavior/feature_extractor.py [FLAGS]
   - Without keypoints: `data/features/{video}/track_{id}.npz`
   - With keypoints: `data/features_kp/{video}/track_{id}.npz`
 
-### Step 9: Model Training, Evaluation & Reports
+### Step 8: Model Training, Evaluation & Reports
 Train the behavior recognition model. The script supports `RNN`, `LSTM`, `GRU`, and `BiLSTM` architectures.
 
 ```bash
@@ -364,7 +363,7 @@ python behavior/train_behavior.py --rnn_type BiLSTM --epochs 80
 - **Output**: Experiment folder under `out/results/` (e.g., `keypoints-BiLSTM-80_epoch`) containing `best_model.pt`, training logs, confusion matrices, and accuracy plots.
 
 
-### Step 10: Validation Video Generation
+### Step 9: Validation Video Generation
 Create overlay videos that show model predictions vs ground truth for inspection.
 
 ```bash
@@ -374,7 +373,7 @@ python -m behavior/generate_videos.py --exp keypoints-BiLSTM-80_epoch --video vi
 - **Logic**: Uses the `best_model.pt` from the experiment folder to generate predictions frame-by-frame and overlays them on the original frames.
 - **Output**: MP4 clips saved to `out/results/{experiment_name}/videos_visual/video3/{clip_id}.mp4`.
 
-### Step 11: Behavior Prediction & Statistics (Inference)
+### Step 10: Behavior Prediction & Statistics (Inference)
 If you need to obtain the total count of predicted frames per class for each pig (to compute metrics without generating videos), use the `predict_behavior.py` script.
 
 ```bash
@@ -413,7 +412,7 @@ python utils/viz_utils.py --video video1 --clip 01 --frame 100 --pose --output p
 - `--output`: (Optional) Path to save the resulting image.
 - `--ann_dir`: (Optional) Custom path to annotations folder.
 #### 3. Generate Videos (Raw, Pose, or SAM)
-Create video files from the extracted frames. You can generate clean clips (raw), clips with pose skeletons, or clips with segmentation masks.
+Create video files (raw, or with pose/SAM/refined overlays) from the annotated clips. You can generate clean clips, clips with pose skeletons, or clips with segmentation masks.
 
 **Mode 1: Raw Clips (No annotations)**
 ```bash
