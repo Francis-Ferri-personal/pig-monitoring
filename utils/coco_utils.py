@@ -3,7 +3,7 @@ import json
 import numpy as np
 from pycocotools import mask as mask_utils
 
-def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_name="pig", super_category="animal", global_img_id_offset=0, global_ann_id_offset=0):
+def sam_to_coco(outputs_per_frame, video_id, video_name, frame_ids, category_name="pig", super_category="animal", global_img_id_offset=0, global_ann_id_offset=0):
     """
     Converts SAM 3 video predictor outputs to COCO format.
     
@@ -11,7 +11,7 @@ def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_n
         outputs_per_frame: Dict mapping frame_idx to dictionary of outputs (out_obj_ids, out_probs, out_boxes_xywh, out_binary_masks).
         video_id: Integer ID for the video.
         video_name: Logical name for the video.
-        frame_paths: List of absolute or relative paths to frames, indexed by frame_idx.
+        frame_ids: List of frame IDs (e.g., "00000", "00001") indexed by frame_idx, used for the COCO file_name.
         category_name: Name of the category (e.g., "pig").
         global_img_id_offset: For multi-clip datasets, offset for image IDs.
         global_ann_id_offset: For multi-clip datasets, offset for annotation IDs.
@@ -49,12 +49,6 @@ def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_n
     
     for i, frame_idx in enumerate(sorted_frame_indices):
         outputs = outputs_per_frame[frame_idx]
-        
-        # Ensure we have a valid index for frame_paths
-        if frame_idx < len(frame_paths):
-            frame_path = frame_paths[frame_idx]
-        else:
-            frame_path = f"unknown_frame_{frame_idx}.png"
 
         # Binary masks are expected in shape (N, H, W)
         masks = outputs.get("out_binary_masks", [])
@@ -65,12 +59,8 @@ def sam_to_coco(outputs_per_frame, video_id, video_name, frame_paths, category_n
             
         img_id = global_img_id_offset + frame_idx
         
-        # Use relative path for file_name in COCO
-        rel_file_name = os.path.join(video_name, os.path.basename(frame_path))
-        
         coco_img = {
             "id": img_id,
-            "file_name": rel_file_name,
             "video_id": video_id,
             "frame_id": frame_idx,
             "prev_image_id": (global_img_id_offset + sorted_frame_indices[i-1]) if i > 0 else -1,

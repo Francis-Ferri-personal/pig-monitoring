@@ -445,7 +445,8 @@ python utils/video_generator.py --all --refined
 - `--pose`: Use pose annotations.
 - `--sam`: Use SAM annotations.
 - `--refined`: Use refined annotations (from `data/annotations/refined`).
-- `--fps`: Output frames per second (default: 1).
+- `--fps`: Output frames per second (default: original clip FPS, e.g. `5`).
+- `--clips-root`: Root folder with the video clips (default: `data/videos/clips`).
 - `--output`: Custom output path (only when rendering a single clip).
 
 #### 4. ID Mapping Configuration

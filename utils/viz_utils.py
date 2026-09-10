@@ -7,58 +7,87 @@ from pycocotools import mask as mask_utils
 
 from app.backend.services.video_style import draw_pose_annotations
 
-def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None, show_pose=False, image_file_name=None):
+def visualize_coco_frame(video_name, clip_id, frame_id, annotations_dir="data/annotations/sam", frames_root="data/images/frames", figsize=(12, 8), output_path=None, show_pose=False, image_file_name=None, frame_image=None, clips_root="data/videos/clips"):
     """
     Visualizes a specific frame from a clip using its COCO annotations. 
     Optimized version using OpenCV for significantly faster rendering.
     """
-    video_dir = video_name
-    json_path = os.path.join(annotations_dir, video_dir, f"{clip_id}.json")
-    if not os.path.exists(json_path):
-        print(f"Error: Annotation file not found at {json_path}")
-        return None
+    if frame_image is None:
+        video_dir = video_name
+        json_path = os.path.join(annotations_dir, video_dir, f"{clip_id}.json")
+        if not os.path.exists(json_path):
+            print(f"Error: Annotation file not found at {json_path}")
+            return None
 
-    with open(json_path, 'r') as f:
-        coco_data = json.load(f)
+        with open(json_path, 'r') as f:
+            coco_data = json.load(f)
 
-    # 1. Find the image entry
-    img_entry = None
-    if image_file_name:
-        requested_name = os.path.basename(image_file_name)
-        for img in coco_data.get('images', []):
-            if os.path.basename(img.get('file_name', '')) == requested_name:
-                img_entry = img
+        # 1. Find the image entry
+        img_entry = None
+        if image_file_name:
+            requested_name = os.path.basename(image_file_name)
+            for img in coco_data.get('images', []):
+                if os.path.basename(img.get('file_name', '')) == requested_name:
+                    img_entry = img
+                    break
+        if img_entry is None:
+            for img in coco_data.get('images', []):
+                if img.get('frame_id') == frame_id:
+                    img_entry = img
+                    break
+
+        if not img_entry:
+            return None
+
+        # 2. Load the image
+        file_name = img_entry.get('file_name')
+        potential_paths = [
+            os.path.join(frames_root, video_dir, file_name),
+            os.path.join(frames_root, video_dir, os.path.basename(clip_id), os.path.basename(file_name)),
+            os.path.join("data/images/frames_masked", os.path.basename(clip_id), os.path.basename(file_name)),
+        ] if file_name else []
+
+        actual_path = None
+        for p in potential_paths:
+            if os.path.exists(p):
+                actual_path = p
                 break
-    if img_entry is None:
-        for img in coco_data.get('images', []):
-            if img.get('frame_id') == frame_id:
-                img_entry = img
-                break
-    
-    if not img_entry:
-        return None
 
-    # 2. Load the image
-    potential_paths = [
-        os.path.join(frames_root, video_dir, img_entry['file_name']),
-        os.path.join(frames_root, video_dir, os.path.basename(clip_id), os.path.basename(img_entry['file_name'])),
-        os.path.join("data/images/frames_masked", os.path.basename(clip_id), os.path.basename(img_entry['file_name'])),
-    ]
-    
-    actual_path = None
-    for p in potential_paths:
-        if os.path.exists(p):
-            actual_path = p
-            break
-            
-    if not actual_path:
-        return None
+        # Load with OpenCV directly (BGR)
+        if actual_path:
+            image = cv2.imread(actual_path)
+        else:
+            # Fallback: read the frame directly from the source clip
+            clip_path = os.path.join(clips_root, video_dir, f"{clip_id}.mp4")
+            cap = cv2.VideoCapture(clip_path)
+            image = None
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
+                ok, image = cap.read()
+                cap.release()
+            if image is None:
+                return None
+    else:
+        image = frame_image
+        coco_data = None
+        img_entry = None
+        if video_name is not None:
+            json_path = os.path.join(annotations_dir, video_name, f"{clip_id}.json")
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    coco_data = json.load(f)
+            img_entry = None
+            if coco_data is not None:
+                for img in coco_data.get('images', []):
+                    if img.get('frame_id') == frame_id:
+                        img_entry = img
+                        break
+        if img_entry is None:
+            return None
 
-    # Load with OpenCV directly (BGR)
-    image = cv2.imread(actual_path)
     if image is None:
         return None
-        
+
     h, w = image.shape[:2]
     vis_image = image.copy()
 

@@ -4,7 +4,6 @@ import yaml
 import argparse
 from tqdm import tqdm
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -16,6 +15,8 @@ from app.backend.services.video_style import convert_to_web_mp4
 
 # Import the visualization function
 from viz_utils import visualize_coco_frame
+
+DEFAULT_CLIPS_ROOT = "data/videos/clips"
 
 
 def draw_frame_number(frame, frame_idx, clip_id=None):
@@ -47,20 +48,41 @@ def draw_frame_number(frame, frame_idx, clip_id=None):
     return frame
 
 
-def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args, mode):
+def read_frame_at(cap, target, current):
+    """Advance the capture to frame `target` and return (frame, new_position).
+
+    `current` is the number of frames already consumed from the capture.
+    Works efficiently when sequential frames are requested (no seek needed).
+    """
+    while current < target:
+        if not cap.grab():
+            return None, current
+        current += 1
+    ok, frame = cap.read()
+    if not ok:
+        return None, current + 1
+    return frame, current + 1
+
+
+def process_single_clip(video_name, clip_id, ann_dir, clips_root, config, args, mode):
     """Processes a single clip and generates a video (raw or annotated)."""
     video_dir = video_name
     json_path = os.path.join(ann_dir, video_dir, f"{clip_id}.json")
-    
+
     if not os.path.exists(json_path):
         print(f"  ! Error: Annotation file not found at {json_path}")
+        return
+
+    clip_path = os.path.join(clips_root, video_dir, f"{clip_id}.mp4")
+    if not os.path.exists(clip_path):
+        print(f"  ! Error: Source clip not found at {clip_path}")
         return
 
     # Determine output path and check for resume
     out_base = config.get('video_out_folder', "out/videos")
     final_out_dir = os.path.join(out_base, video_dir)
     os.makedirs(final_out_dir, exist_ok=True)
-    
+
     if args.output and not args.all:
         video_out_path = args.output
     else:
@@ -74,56 +96,60 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
         coco_data = json.load(f)
 
     # Sort images by frame_id to ensure chronological order
-    images = sorted(coco_data.get('images', []), key=lambda x: x['frame_id'])
-    
+    images = sorted(coco_data.get('images', []), key=lambda x: x.get('frame_id', 0))
+
     if not images:
         print(f"  ! Error: No images found in {json_path}")
         return
 
+    cap = cv2.VideoCapture(clip_path)
+    if not cap.isOpened():
+        print(f"  ! Error: Could not open clip {clip_path}")
+        return
+
+    source_fps = cap.get(cv2.CAP_PROP_FPS) or args.fps or 1.0
+    out_fps = args.fps or source_fps
+
     print(f"\n>>> Generating {mode} video for {video_dir}/{clip_id}")
     video_writer = None
     raw_video_out_path = str(Path(video_out_path).with_name(f"{Path(video_out_path).stem}_raw.mp4"))
-    
+
+    current = 0
     for img_entry in tqdm(images, desc=f"Clip {clip_id}", leave=False):
         frame_idx = img_entry['frame_id']
-        
+
+        frame, current = read_frame_at(cap, frame_idx, current)
+        if frame is None:
+            continue
+
         if mode == "raw":
-            # Just load the original frame directly (fastest)
-            # viz_utils logic for finding actual path (check multiple locations)
-            potential_paths = [
-                os.path.join(frames_root, video_dir, img_entry['file_name']),
-                os.path.join(frames_root, video_dir, os.path.basename(clip_id), os.path.basename(img_entry['file_name'])),
-                os.path.join("data/images/frames_masked", os.path.basename(clip_id), os.path.basename(img_entry['file_name'])),
-            ]
-            vis_frame = None
-            for p in potential_paths:
-                if os.path.exists(p):
-                    vis_frame = cv2.imread(p)
-                    break
+            # Just use the original clip frame directly (fastest)
+            vis_frame = frame
         else:
-            # Call viz_utils to render annotations (SAM or Pose)
+            # Render annotations (SAM/Pose/Refined) over the clip frame
             vis_frame = visualize_coco_frame(
                 video_name=video_name,
                 clip_id=clip_id,
                 frame_id=frame_idx,
                 annotations_dir=ann_dir,
-                frames_root=frames_root,
+                frame_image=frame,
                 show_pose=(mode in {"pose", "refined"}),
-                image_file_name=img_entry.get("file_name")
             )
-        
+
         if vis_frame is None:
             continue
 
         draw_frame_number(vis_frame, frame_idx, clip_id=clip_id)
 
         h, w = vis_frame.shape[:2]
-        
+
         if video_writer is None:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video_writer = cv2.VideoWriter(raw_video_out_path, fourcc, args.fps, (w, h))
-        
+            video_writer = cv2.VideoWriter(raw_video_out_path, fourcc, out_fps, (w, h))
+
         video_writer.write(vis_frame)
+
+    cap.release()
 
     if video_writer:
         video_writer.release()
@@ -136,8 +162,9 @@ def process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args,
     else:
         print(f"  ! No frames processed for {clip_id}")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate videos from frames (raw or annotated).")
+    parser = argparse.ArgumentParser(description="Generate videos from clips (raw or annotated).")
     parser.add_argument("--video", type=str, default=None, help="Video Name (e.g., 'June_23_01' or '1' which maps to 'video1')")
     parser.add_argument("--clip", type=str, default=None, help="Clip ID (e.g., '01' or '1' which maps to '01')")
     parser.add_argument("--all", action="store_true", help="Process all available clips")
@@ -146,8 +173,10 @@ def main():
     parser.add_argument("--refined", action="store_true", help="Use Refined annotations (cleaned SAM)")
     parser.add_argument("--output", type=str, default=None, help="Output video path")
     parser.add_argument("--overwrite", action="store_true", help="Regenerate an existing output video")
-    parser.add_argument("--fps", type=int, default=1, help="Output video FPS.")
-    
+    parser.add_argument("--fps", type=int, default=None, help="Output video FPS (default: original clip FPS).")
+    parser.add_argument("--clips-root", type=str, default=DEFAULT_CLIPS_ROOT,
+                        help=f"Root folder with the video clips (default: {DEFAULT_CLIPS_ROOT})")
+
     args = parser.parse_args()
 
     # Determine mode and directories
@@ -166,16 +195,16 @@ def main():
     else:
         # Default mode is now raw clips (no annotations)
         mode = "raw"
-        ann_dir = "data/annotations/sam" # We still need any JSON to get the frame list for the clip
+        ann_dir = "data/annotations/sam"  # We still need any JSON to get the frame list for the clip
         default_out = "out/videos/clip"
 
     # Load config
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
-    
+
     # Override output folder from config if present, otherwise use logic above
     config['video_out_folder'] = default_out
-    frames_root = config.get('frames_folder', "data/images/frames")
+    clips_root = args.clips_root
 
     if args.all:
         if not os.path.exists(ann_dir):
@@ -183,14 +212,14 @@ def main():
             return
 
         video_folders = sorted([d for d in os.listdir(ann_dir) if os.path.isdir(os.path.join(ann_dir, d))])
-        
+
         for v_folder in video_folders:
             v_path = os.path.join(ann_dir, v_folder)
             clip_files = sorted([f for f in os.listdir(v_path) if f.endswith('.json')])
-            
+
             for c_file in clip_files:
                 c_id = c_file.replace('.json', '')
-                process_single_clip(v_folder, c_id, ann_dir, frames_root, config, args, mode)
+                process_single_clip(v_folder, c_id, ann_dir, clips_root, config, args, mode)
     else:
         if args.video is None:
             print("Error: Provide --video or use --all")
@@ -211,21 +240,22 @@ def main():
             clip_id = args.clip
             if clip_id.isdigit():
                 clip_id = f"{int(clip_id):02d}"
-            
-            process_single_clip(video_name, clip_id, ann_dir, frames_root, config, args, mode)
+
+            process_single_clip(video_name, clip_id, ann_dir, clips_root, config, args, mode)
         else:
             # Process all clips for the specified video
             clip_files = sorted([f for f in os.listdir(video_path) if f.endswith('.json')])
             if not clip_files:
                 print(f"No clip files found for video {video_name}")
                 return
-            
+
             print(f"\n>>> Processing all {len(clip_files)} clips for video {video_name}...")
             for c_file in clip_files:
                 c_id = c_file.replace('.json', '')
-                process_single_clip(video_name, c_id, ann_dir, frames_root, config, args, mode)
+                process_single_clip(video_name, c_id, ann_dir, clips_root, config, args, mode)
 
     print("\n>>> FINISHED.")
+
 
 if __name__ == "__main__":
     main()
