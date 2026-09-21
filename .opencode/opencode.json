@@ -1,17 +1,58 @@
 {
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
-      "options": {
-        "baseURL": "http://server:11434/v1"
-      },
-      "models": {
-        "gemma4:26b": {
-          "name": "Gemma 4"
+    "$schema": "https://opencode.ai/config.json",
+    "provider": {
+        "ollama": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Ollama (local)",
+            "options": {
+                "baseURL": "http://server:11434/v1"
+            },
+            "models": {
+                "qwen3.8:27b": {
+                    "name": "Qwen 3.8 27b"
+                },
+                "qwen3.5:9b": {
+                    "name": "Qwen 3.5 9b"
+                },
+                "gemma4:27b": {
+                    "name": "Gemma 4"
+                }
+            }
+        },
+        "omniroute": {
+            "name": "OmniRoute",
+            "npm": "@ai-sdk/openai-compatible",
+            "options": {
+                "baseURL": "https://raspberrypi.tailfb9a88.ts.net:9005/v1",
+                "apiKey": "sk-b530dcbbec2c0492-a7777c-fc63329b"
+            },
+            "models": {
+                "kr/glm-5b": {
+                    "name": "Kiro AI: GLM 5B"
+                },
+                "kr/claude-sonnet-4.5": {
+                    "name": "Kiro AI: Claude Sonnet 4.5"
+                },
+                "kr/claude-haiku-4.5": {
+                    "name": "Kiro AI: Claude Haiku 4.5"
+                },
+                "oc/deepseek-v4-flash-free": {
+                    "name": "OpenCode: Deepseek v4 flash"
+                },
+                "oc/nemotron-3.5-lightning-free": {
+                    "name": "OpenCode: Nemotron 3.5 Lightning (free)"
+                },
+                "oc/nemotron-3-ultra-free": {
+                    "name": "OpenCode: Nemotron 3 Ultra (free)"
+                },
+                "oc/big-pickle": {
+                    "name": "OpenCode: Big Pickle"
+                },
+                "openrouter/openrouter/free": {
+                    "name": "Openrouter: Free"
+                }
+            }
         }
-      }
-    }
-  }
+    },
+    "disabled_providers": []
 }
