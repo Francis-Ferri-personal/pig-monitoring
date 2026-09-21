@@ -70,7 +70,7 @@ cd ..
 
 ## Workflow
 
-> **Video-based processing**: The pipeline works on **video clips** directly instead of individual frames. Frame extraction is **not** required: `tools/gen_anns_videos.py` applies the static mask per frame **in memory** while reading the clips, so no `clips_masked` videos, masked frame dumps, or per-frame files are produced.
+> **Video-based processing**: The pipeline works on **video clips** directly instead of individual frames. Frame extraction is **not** required: `tools/gen_anns.py` applies the static mask per frame **in memory** while reading the clips, so no `clips_masked` videos, masked frame dumps, or per-frame files are produced.
 
 ### Step 1: Split Videos into Clips
 Use the `utils/video-splitter.py` script to batch-process raw videos into shorter segments for easier analysis.
@@ -86,18 +86,18 @@ python utils/video-splitter.py [--resume | --skip-existing]
 - **Checkpoint**: If you pass the `--resume` (or `--skip-existing`) flag, it will skip processing any videos that already have output clips in the clips folder.
 
 ### Step 3: Batch Annotation Generation (BBoxes & Tracking)
-Use the `tools/gen_anns_videos.py` script to automatically detect and track pigs using SAM 3. This will generate the initial bounding boxes and segmentation masks.
+Use the `tools/gen_anns.py` script to automatically detect and track pigs using SAM 3. This will generate the initial bounding boxes and segmentation masks.
 
 ```bash
-python tools/gen_anns_videos.py --prompt "pig"
+python tools/gen_anns.py --prompt "pig"
 ```
 
 **Test a single clip** (fast iteration):
 ```bash
 # Single video, all its clips
-python tools/gen_anns_videos.py --video May_25_01
+python tools/gen_anns.py --video May_25_01
 # Single video + single clip
-python tools/gen_anns_videos.py --video May_25_01 --clip 01
+python tools/gen_anns.py --video May_25_01 --clip 01
 ```
 
 **Arguments:**

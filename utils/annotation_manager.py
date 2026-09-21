@@ -6,23 +6,26 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 class AnnotationManager:
-    def __init__(self, pose_dir="data/annotations/pose", refined_dir="data/annotations/refined"):
+    def __init__(self, pose_dir="data/annotations/pose", refined_dir="data/annotations/refined", source_dir=None):
+        # The source of the annotations to refine. By default the SAM clip
+        # annotations are used. `pose_dir` is kept for backward compatibility.
+        self.source_dir = source_dir if source_dir is not None else "data/annotations/sam"
         self.pose_dir = pose_dir
         self.refined_dir = refined_dir
 
     def initialize_refined(self, video_id=None, overwrite=False):
-        """Copies files/folders from data/annotations/pose to data/annotations/refined."""
-        print(f">>> Initializing refined annotations: {self.pose_dir} -> {self.refined_dir}")
-        if not os.path.exists(self.pose_dir):
-            print(f"Error: Source directory {self.pose_dir} does not exist.")
+        """Copies files/folders from the source dir (default: SAM clips) to data/annotations/refined."""
+        print(f">>> Initializing refined annotations: {self.source_dir} -> {self.refined_dir}")
+        if not os.path.exists(self.source_dir):
+            print(f"Error: Source directory {self.source_dir} does not exist.")
             return
 
         os.makedirs(self.refined_dir, exist_ok=True)
         
-        items = [video_id] if video_id else os.listdir(self.pose_dir)
+        items = [video_id] if video_id else os.listdir(self.source_dir)
 
         for item in items:
-            src_item = os.path.join(self.pose_dir, item)
+            src_item = os.path.join(self.source_dir, item)
             dst_item = os.path.join(self.refined_dir, item)
             
             if not os.path.exists(src_item):
@@ -261,14 +264,14 @@ class AnnotationManager:
         """
         Applies mapping with logic: { MASTER_ID: TRACKER_ID }
         """
-        pose_path = os.path.join(self.pose_dir, video_key, f"{clip_key}.json")
+        source_path = os.path.join(self.source_dir, video_key, f"{clip_key}.json")
         refined_path = os.path.join(self.refined_dir, video_key, f"{clip_key}.json")
 
-        if os.path.exists(pose_path):
+        if os.path.exists(source_path):
             os.makedirs(os.path.dirname(refined_path), exist_ok=True)
-            shutil.copy2(pose_path, refined_path)
+            shutil.copy2(source_path, refined_path)
         else:
-            print(f"  ! Error: Source annotation not found at {pose_path}")
+            print(f"  ! Error: Source annotation not found at {source_path}")
             return False
 
         with open(refined_path, 'r') as f:
@@ -558,21 +561,6 @@ class AnnotationManager:
                     updated_clips += 1
         print(f"✓ Processed {total_clips} clips ({updated_clips} updated) from {os.path.basename(mapping_file)}")
 
-    def remap_all(self, mapping_file):
-        self._ensure_refined_exists()
-        print(f">>> Starting batch remapping from file: {mapping_file}")
-        with open(mapping_file, 'r') as f:
-            full_mapping = json.load(f)
-        total_clips = 0
-        updated_clips = 0
-        for v_entry in full_mapping:
-            v_key = v_entry.get('video')
-            for c_entry in v_entry.get('clips', []):
-                total_clips += 1
-                if self.apply_remap(v_key, c_entry.get('clip'), c_entry.get('remaps', [])):
-                    updated_clips += 1
-        print(f"✓ Processed {total_clips} clips ({updated_clips} updated) from {os.path.basename(mapping_file)}")
-
     def remap_all_files(self, remappings_dir="data/annotations/remappings"):
         """
         Scans the remappings directory and applies all found .json mapping files.
@@ -598,6 +586,7 @@ class AnnotationManager:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--source-dir", default=None, help="Source annotations directory (default: data/annotations/sam)")
     subparsers = parser.add_subparsers(dest="command")
     init_p = subparsers.add_parser("init")
     init_p.add_argument("--all", action="store_true", default=True, help="Copy all folders")
@@ -620,7 +609,7 @@ def main():
     del_f.add_argument("--end", required=True, type=int)
     
     args = parser.parse_args()
-    manager = AnnotationManager()
+    manager = AnnotationManager(source_dir=args.source_dir)
     if args.command == "init": manager.initialize_refined(video_id=args.video, overwrite=args.overwrite)
     elif args.command == "delete-id": manager.delete_id(args.video, args.clip, args.id)
     elif args.command == "delete-frames": manager.delete_frames(args.video, args.clip, args.start, args.end)

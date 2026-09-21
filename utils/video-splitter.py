@@ -12,6 +12,14 @@ def split_videos():
         action="store_true",
         help="Skip videos that have already been split (output directory exists and contains mp4 clips)."
     )
+    parser.add_argument(
+        "--input", type=str, default=None,
+        help="Custom input directory with raw .mp4 videos (default: config['videos_folder'])."
+    )
+    parser.add_argument(
+        "--output", type=str, default=None,
+        help="Custom output directory for the split clips (default: config['clips_folder'])."
+    )
     args = parser.parse_args()
 
     # 2. Determine root directory
@@ -28,9 +36,17 @@ def split_videos():
         print(f"Error: Configuration file not found at {config_path}")
         return
 
-    # 4. Setup Paths
-    input_dir = os.path.join(root_dir, config['videos_folder'])
-    output_base_dir = os.path.join(root_dir, config['clips_folder'])
+    # 4. Setup Paths (custom --input/--output override the config defaults)
+    def resolve(path, default):
+        # Custom paths may be absolute or relative to the project root.
+        return path if path is not None else default
+
+    input_dir = resolve(args.input, os.path.join(root_dir, config['videos_folder']))
+    output_base_dir = resolve(args.output, os.path.join(root_dir, config['clips_folder']))
+    if not os.path.isabs(input_dir):
+        input_dir = os.path.join(root_dir, input_dir)
+    if not os.path.isabs(output_base_dir):
+        output_base_dir = os.path.join(root_dir, output_base_dir)
     clip_len = config['clip_duration_minutes'] * 60
 
     if not os.path.exists(output_base_dir):
