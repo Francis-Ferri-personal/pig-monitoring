@@ -3,6 +3,24 @@ import os
 import yaml
 from moviepy import VideoFileClip
 
+def parse_resolution(value):
+    """Parse a resolution spec into a (width, height) tuple, or None if invalid/absent.
+    Accepts: [W, H] (or (W, H)) or "WxH"."""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return (int(value[0]), int(value[1]))
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, str):
+        try:
+            w, h = (int(x) for x in value.lower().split("x"))
+            return (w, h)
+        except ValueError:
+            return None
+    return None
+
 def split_videos():
     # 1. Parse arguments
     parser = argparse.ArgumentParser(description="Split raw videos into shorter clips.")
@@ -19,6 +37,10 @@ def split_videos():
     parser.add_argument(
         "--output", type=str, default=None,
         help="Custom output directory for the split clips (default: config['clips_folder'])."
+    )
+    parser.add_argument(
+        "--resolution", type=str, default=None,
+        help="Override clips resolution to WxH, e.g. 1920x1080. Default: config['clip_resolution']."
     )
     args = parser.parse_args()
 
@@ -48,6 +70,20 @@ def split_videos():
     if not os.path.isabs(output_base_dir):
         output_base_dir = os.path.join(root_dir, output_base_dir)
     clip_len = config['clip_duration_minutes'] * 60
+
+    # Determine clip resolution: --resolution overrides config['clip_resolution']
+    if args.resolution:
+        resize_size = parse_resolution(args.resolution)
+        if resize_size is None:
+            print(f"Error: invalid --resolution '{args.resolution}'. Expected WxH, e.g. 1920x1080.")
+            return
+    else:
+        resize_size = parse_resolution(config.get("clip_resolution"))
+        if resize_size is None and "clip_resolution" in config:
+            print("Error: config['clip_resolution'] must be {width: int, height: int}.")
+            return
+    if resize_size:
+        print(f">>> Clips will be resized to {resize_size[0]}x{resize_size[1]}.")
 
     if not os.path.exists(output_base_dir):
         os.makedirs(output_base_dir)
@@ -90,10 +126,12 @@ def split_videos():
                 print(f"Exporting to {raw_video_name}/: {output_filename}")
                 
                 new_clip = video.subclipped(start_time, end_time)
+                if resize_size is not None:
+                    new_clip = new_clip.resized(new_size=resize_size)
                 new_clip.write_videofile(
-                    output_path, 
-                    codec="libx264", 
-                    audio=False, 
+                    output_path,
+                    codec="libx264",
+                    audio=False,
                     logger=None
                 )
             

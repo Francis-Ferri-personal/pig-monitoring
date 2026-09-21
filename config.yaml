@@ -2,7 +2,11 @@
 clip_duration_minutes: 3
 videos_folder: "data/videos/raw"
 clips_folder: "data/videos/clips"
-clips_masked_folder: "data/videos/clips_masked"
+
+# Optional: resize clips to this resolution when splitting [width, height].
+# Set to null to disable resizing (keep original resolution).
+clip_resolution: [1920, 1080]
+# clips_masked_folder: "data/videos/clips_masked"
 
 # Clip splitting settings (to frames) - only needed if using frame extraction
 frames_per_second: 1
