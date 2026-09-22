@@ -35,13 +35,7 @@ def natural_key(name):
     """Sort key that orders embedded numbers numerically: video1, video2, video10."""
     return [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', name)]
 
-def load_mask(mask_path):
-    """Load a static mask as a binary (0/255) grayscale image."""
-    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        raise ValueError(f"Could not read mask at {mask_path}")
-    _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-    return mask
+
 
 def log_memory(stage, clip_id):
     """Print current host RAM + GPU memory usage (helps catch OOM early)."""
@@ -254,32 +248,17 @@ def run_chunk_session(predictor, chunk_pils, chunk_start, chunk_end, overlap,
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-def read_masked_frames(video_path, mask):
+def read_frames(video_path):
     """
-    Reads all frames from a clip video and applies the static mask in memory
-    (
-    Returns the list of masked PIL frames and their frame IDs (0, 1, 2, ...).
+    Reads all frames from a clip video and returns them as PIL images.
+    Returns the list of PIL frames and their frame IDs (0, 1, 2, ...).
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         print(f"  ! Warning: Could not open video {video_path}")
         return [], []
 
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    # Resize mask if necessary
-    if mask.shape[:2] != (height, width):
-        mask_resized = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
-    else:
-        mask_resized = mask
-
-    # Convert grayscale mask to 3-channel
-    if len(mask_resized.shape) == 2:
-        mask_3d = cv2.merge([mask_resized, mask_resized, mask_resized])
-    else:
-        mask_3d = mask_resized
 
     pil_frames = []
     pbar = tqdm(total=total_frames, desc=f"  Reading frames {os.path.basename(os.path.dirname(video_path))}/{os.path.basename(video_path)}", unit="frame")
@@ -307,8 +286,7 @@ def read_masked_frames(video_path, mask):
         fail_count = 0
         last_good += 1
 
-        masked_frame = cv2.bitwise_and(frame, mask_3d)
-        frame_rgb = cv2.cvtColor(masked_frame, cv2.COLOR_BGR2RGB)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_frames.append(Image.fromarray(frame_rgb))
         pbar.update(1)
 
@@ -318,40 +296,93 @@ def read_masked_frames(video_path, mask):
     frame_ids = [str(i) for i in range(len(pil_frames))]
     return pil_frames, frame_ids
 
-def generate_annotations(prompt_text="pig", video_filter=None, mask_path="data/images/mask.png", clip_filter=None, gpus=None, chunk_frames=None, chunk_overlap=60, clips_root=None, out_root=None):
+def filter_out_of_bounds_annotations(
+    coco_data: dict,
+    height_limit: int = 960,
+    max_outside_ratio: float = 0.5,
+) -> int:
     """
-    Processes all videos and their clips found in the clips directory, applying the
-    static mask in memory (no need for pre-masked videos or extracted frames).
+    In-place filter: remove annotations whose majority of area is OUTSIDE
+    the valid vertical band [0, height_limit].
+
+    An annotation is removed if the fraction of its bbox height that falls
+    within [0, height_limit] is less than (1 - max_outside_ratio).
+    i.e.  more   than `max_outside_ratio` of the bbox height is below the line.
+
+    Returns number of removed annotations.
+    """
+    before = len(coco_data["annotations"])
+    kept_ids = set()
+
+    for ann in coco_data["annotations"]:
+        # bbox: [x, y, w, h] (COCO format, top-left)
+        x, y, w, h = ann["bbox"]
+        bbox_area = w * h
+        if bbox_area <= 0:
+            kept_ids.add(ann["id"])
+            continue
+
+        # Vertical overlap with [0, height_limit]
+        overlap_h = max(0.0, min(y + h, height_limit) - max(y, 0.0))
+        overlap_area = w * overlap_h
+        inside_ratio = overlap_area / bbox_area
+
+        if inside_ratio >= (1.0 - max_outside_ratio):
+            kept_ids.add(ann["id"])
+
+    coco_data["annotations"] = [a for a in coco_data["annotations"] if a["id"] in kept_ids]
+    removed = before - len(coco_data["annotations"])
+    return removed
+
+
+def generate_annotations(
+    prompt_text="pig",
+    video_filter=None,
+    clip_filter=None,
+    gpus=None,
+    chunk_frames=None,
+    chunk_overlap=60,
+    clips_root=None,
+    out_root=None,
+    height_limit=960,
+):
+    """
+    Processes all videos and their clips found in the clips directory.
+    No static mask is applied; out-of-bounds annotations (majority area below
+    height_limit) are filtered after each clip.
 
     Args:
-        clips_root: Optional custom input directory containing <video>/<clip>.mp4
-                    hierarchies (default: data/videos/clips).
-        out_root:   Optional custom output directory for the COCO JSONs
-                    (default: data/annotations/sam).
+        clips_root:    Optional custom input directory containing <video>/<clip>.mp4.
+        out_root:      Optional custom output directory for the COCO JSONs.
+        height_limit:  Vertical boundary; annotations mostly below this are removed.
     """
-    # 1. Load mask once
-    print(f">>> Loading mask from {mask_path}...")
-    mask = load_mask(mask_path)
-
-    # 2. Initialize predictor once (default: single GPU to avoid multi-GPU worker noise/hangs)
+    # Initialize predictor (default: single GPU)
     print(">>> Initializing SAM 3 Predictor...")
     if gpus is None:
         gpus = [torch.cuda.current_device()]
     predictor = build_sam3_video_predictor(gpus_to_use=gpus)
     print(f">>> Using GPU(s): {gpus}")
+    print(f">>> Annotation height limit: y={height_limit} (majority of bbox outside [0,{height_limit}] → removed)")
 
     try:
-        _process_videos(predictor, mask, prompt_text=prompt_text,
-                        video_filter=video_filter, clip_filter=clip_filter,
-                        chunk_frames=chunk_frames, chunk_overlap=chunk_overlap,
-                        clips_root=clips_root, out_root=out_root)
+        _process_videos(
+            predictor,
+            prompt_text=prompt_text,
+            video_filter=video_filter,
+            clip_filter=clip_filter,
+            chunk_frames=chunk_frames,
+            chunk_overlap=chunk_overlap,
+            clips_root=clips_root,
+            out_root=out_root,
+            height_limit=height_limit,
+        )
     except KeyboardInterrupt:
         print("\n>>> Interrupted by user. Shutting down predictor cleanly...")
     finally:
         predictor.shutdown()
         print(">>> SAM 3 predictor shutdown complete.\n")
 
-def _process_videos(predictor, mask, prompt_text="pig", video_filter=None, clip_filter=None, chunk_frames=None, chunk_overlap=60, clips_root=None, out_root=None):
+def _process_videos(predictor, prompt_text="pig", video_filter=None, clip_filter=None, chunk_frames=None, chunk_overlap=60, clips_root=None, out_root=None, height_limit=960):
     """Run the annotation pipeline across videos/clips using the given predictor."""
     clips_base_root = clips_root or "data/videos/clips"
     output_base_root = out_root or "data/annotations/sam"
@@ -441,9 +472,9 @@ def _process_videos(predictor, mask, prompt_text="pig", video_filter=None, clip_
             print(f"[{i+1}/{len(clips)}] Processing Clip: {clip_id} ...", flush=True)
             
             clip_video_path = os.path.join(clips_root, f"{clip_id}.mp4")
-            video_frames_masked, frame_ids = read_masked_frames(clip_video_path, mask)
+            video_frames, frame_ids = read_frames(clip_video_path)
             
-            if not video_frames_masked:
+            if not video_frames:
                 print(f"  ! Warning: Could not read frames from {clip_id}. Skipping.")
                 continue
 
@@ -461,10 +492,10 @@ def _process_videos(predictor, mask, prompt_text="pig", video_filter=None, clip_
                 if chunk_frames and chunk_overlap >= chunk_frames:
                     chunk_overlap = chunk_frames // 2
                     print(f"  ! Shrinking chunk overlap to {chunk_overlap} (must be < chunk-frames).", flush=True)
-                chunks = make_chunks(len(video_frames_masked), chunk_frames, chunk_overlap)
-                chunk_slices = [video_frames_masked[s:e] for s, e in chunks]
-                del video_frames_masked
-                video_frames_masked = None
+                chunks = make_chunks(len(video_frames), chunk_frames, chunk_overlap)
+                chunk_slices = [video_frames[s:e] for s, e in chunks]
+                del video_frames
+                video_frames = None
 
                 num_chunks = len(chunks)
                 print(f"  Processing {len(frame_ids)} frames in {num_chunks} chunk(s) "
@@ -518,6 +549,15 @@ def _process_videos(predictor, mask, prompt_text="pig", video_filter=None, clip_
 
                 pbar.close()
 
+                # Post-process: remove annotations whose majority of area is
+                # outside the valid vertical band [0, height_limit].
+                n_before = len(coco_data["annotations"])
+                removed = filter_out_of_bounds_annotations(coco_data, height_limit=height_limit)
+                n_after = len(coco_data["annotations"])
+                if removed:
+                    print(f"  Filter: removed {removed}/{n_before} anns outside [0, {height_limit}] "
+                          f"(max_outside_ratio=0.5). {n_after} kept.", flush=True)
+
                 # Save final (atomic-ish: write to temp then rename).
                 save_coco_to_json(coco_data, checkpoint_path)
                 os.replace(checkpoint_path, output_json)
@@ -547,7 +587,7 @@ def _process_videos(predictor, mask, prompt_text="pig", video_filter=None, clip_
                 chunk_pils = None
                 chunk_slices = None
                 chunks = None
-                video_frames_masked = None
+                video_frames = None
                 frame_ids = None
                 coco_data = None
                 trail_by_frame = None
@@ -567,12 +607,22 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, default="pig", help="Text prompt for SAM 3 (default: 'pig')")
     parser.add_argument("--video", type=str, default=None, help="Process only the specified video folder name, e.g., May_25_01.")
     parser.add_argument("--clip", type=str, default=None, help="Process only the specified clip number, e.g., 01 (requires --video).")
-    parser.add_argument("--mask", type=str, default="data/images/mask.png", help="Path to mask PNG (default: data/images/mask.png)")
     parser.add_argument("--gpus", type=int, nargs="+", default=None, help="GPU ID(s) to use (default: single GPU)")
     parser.add_argument("--chunk-frames", type=int, default=None, help="Process clips in chunks of N frames to reduce peak GPU memory (e.g. 300 for a 900-frame clip). Default: no chunking.")
     parser.add_argument("--chunk-overlap", type=int, default=60, help="Overlap frames between consecutive chunks, used to keep track IDs continuous (default: 60).")
     parser.add_argument("--clips-root", type=str, default=None, help="Custom input directory with <video>/<clip>.mp4 (default: data/videos/clips).")
     parser.add_argument("--out-root", type=str, default=None, help="Custom output directory for the COCO JSONs (default: data/annotations/sam).")
+    parser.add_argument("--height-limit", type=int, default=960, help="Vertical boundary; annotations mostly below this are removed (default: 960).")
     
     args = parser.parse_args()
-    generate_annotations(prompt_text=args.prompt, video_filter=args.video, mask_path=args.mask, clip_filter=args.clip, gpus=args.gpus, chunk_frames=args.chunk_frames, chunk_overlap=args.chunk_overlap, clips_root=args.clips_root, out_root=args.out_root)
+    generate_annotations(
+        prompt_text=args.prompt,
+        video_filter=args.video,
+        clip_filter=args.clip,
+        gpus=args.gpus,
+        chunk_frames=args.chunk_frames,
+        chunk_overlap=args.chunk_overlap,
+        clips_root=args.clips_root,
+        out_root=args.out_root,
+        height_limit=args.height_limit,
+    )
