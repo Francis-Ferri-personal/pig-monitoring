@@ -1,13 +1,21 @@
 import os
+import sys
 import numpy as np
 import torch
 import logging
+import cv2
 from PIL import Image
 from pathlib import Path
 
 from typing import Dict, Any, List, Tuple
 from torchvision import models, transforms
 
+# Ensure app/backend is importable for `utils.frame_cache` (pose worker parity).
+_APP_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _APP_BACKEND not in sys.path:
+    sys.path.insert(0, _APP_BACKEND)
+
+from utils.frame_cache import FrameReader
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -41,24 +49,18 @@ class FeatureExtractionService:
         ])
 
     def extract_features_from_coco(
-        self, 
-        coco_data: Dict[str, Any], 
-        frames_directory: str, 
+        self,
+        coco_data: Dict[str, Any],
+        video_path: str,
         output_npz_path: str,
         padding_factor: float = 1.1
     ) -> str:
         """
-        Processes an in-memory COCO dictionary, extracts spatio-temporal features 
+        Processes an in-memory COCO dictionary, extracts spatio-temporal features
         via batched CNN inferencing, and saves a consolidated .npz file structured by track.
         """
-        logging.info(f"Starting feature extraction for frames in: {frames_directory}")
-        
-        backend_root = Path(__file__).resolve().parents[1]
-        if not os.path.isabs(frames_directory):
-            frames_dir_path = backend_root / frames_directory
-        else:
-            frames_dir_path = Path(frames_directory)
-        
+        logging.info(f"Starting feature extraction for frames in: {video_path}")
+
         # Fast lookup mapping for image metadata
         images_map = {img["id"]: img for img in coco_data.get("images", [])}
         tracks_data: Dict[int, List[Dict]] = {}
@@ -89,100 +91,90 @@ class FeatureExtractionService:
         # Master dictionary to be exported as a multi-keyed .npz archive
         npz_save_dict = {}
 
-        # 2. Process each distinct tracked individual sequentially
-        for tid, instances in tracks_data.items():
-            # Ensure strict chronological frame ordering for the sequence
-            instances.sort(key=lambda x: x["frame_id"])
+        # Single shared frame reader across all tracks (no per-frame JPEGs on disk).
+        frame_reader = FrameReader(video_path)
+        try:
+            for tid, instances in tracks_data.items():
+                instances.sort(key=lambda x: x["frame_id"])
 
-            feats_list: List[np.ndarray] = []
-            frames_list: List[int] = []
-            
-            prev_cx_norm, prev_cy_norm = None, None
+                feats_list: List[np.ndarray] = []
+                frames_list: List[int] = []
 
-            # Intermediate buffers for batch CNN inferencing
-            batch_images: List[torch.Tensor] = []
-            batch_bbox_feats: List[List[float]] = []
-            batch_kp_feats: List[List[float]] = []
-            batch_frames: List[int] = []
+                prev_cx_norm, prev_cy_norm = None, None
 
-            def _process_batch():
-                if not batch_bbox_feats:
-                    return
-                
-                # Determine device type string safely for autocast control
-                dev_type = "cuda" if "cuda" in str(self.device) else "cpu"
+                batch_images: List[torch.Tensor] = []
+                batch_bbox_feats: List[List[float]] = []
+                batch_kp_feats: List[List[float]] = []
+                batch_frames: List[int] = []
 
-                # Execute batch CNN inference on target crops
-                with torch.no_grad():
+                def _process_batch():
+                    if not batch_bbox_feats:
+                        return
 
-                    with torch.autocast(device_type=dev_type, enabled=False):
-                        batch_tensor = torch.stack(batch_images, dim=0).to(self.device).float()
-                        self.backbone = self.backbone.float()
-                        emb_batch = self.backbone(batch_tensor).cpu().numpy().astype(np.float32)
+                    dev_type = "cuda" if "cuda" in str(self.device) else "cpu"
 
-                # Unpack and merge features for each instance within the current batch
-                for j in range(len(batch_bbox_feats)):
-                    # Concatenation map: [CNN (512) + BBox/Motion (11) + Keypoint Geometry (40)]
-                    full_vector = np.concatenate([
-                        emb_batch[j],
-                        np.array(batch_bbox_feats[j], dtype=np.float32),
-                        np.array(batch_kp_feats[j], dtype=np.float32)
-                    ], axis=0)
-                    
-                    feats_list.append(full_vector)
-                    frames_list.append(batch_frames[j])
+                    with torch.no_grad():
+                        with torch.autocast(device_type=dev_type, enabled=False):
+                            batch_tensor = torch.stack(batch_images, dim=0).to(self.device).float()
+                            self.backbone = self.backbone.float()
+                            emb_batch = self.backbone(batch_tensor).cpu().numpy().astype(np.float32)
 
-                # Reset batch buffers
-                batch_images.clear()
-                batch_bbox_feats.clear()
-                batch_kp_feats.clear()
-                batch_frames.clear()
+                    for j in range(len(batch_bbox_feats)):
+                        full_vector = np.concatenate([
+                            emb_batch[j],
+                            np.array(batch_bbox_feats[j], dtype=np.float32),
+                            np.array(batch_kp_feats[j], dtype=np.float32)
+                        ], axis=0)
 
-            # Dynamic kinematic calculation and crop aggregation loop
-            for inst in instances:
-                x, y, w, h = inst["bbox"]
-                img_w, img_h = inst["img_size"]
-                
-                # Process structural BBox features and raw motion displacements
-                bbox_feats, prev_cx_norm, prev_cy_norm = self._compute_bbox_features(
-                    x, y, w, h, img_w, img_h, prev_cx_norm, prev_cy_norm
-                )
-                
-                # Extract fixed-size engineering features from posture keypoints
-                kp_feats = self._compute_keypoint_features(inst["keypoints"], img_w, img_h, (x, y, w, h))
+                        feats_list.append(full_vector)
+                        frames_list.append(batch_frames[j])
 
-                # Handle crop initialization from disk
-                img_path = frames_dir_path / os.path.basename(inst["file_name"])
-                if not img_path.exists():
-                    logging.warning(f"Frame file not found on disk: {img_path}")
-                    continue
+                    batch_images.clear()
+                    batch_bbox_feats.clear()
+                    batch_kp_feats.clear()
+                    batch_frames.clear()
 
-                try:
-                    with Image.open(img_path).convert("RGB") as img:
+                for inst in instances:
+                    x, y, w, h = inst["bbox"]
+                    img_w, img_h = inst["img_size"]
+
+                    bbox_feats, prev_cx_norm, prev_cy_norm = self._compute_bbox_features(
+                        x, y, w, h, img_w, img_h, prev_cx_norm, prev_cy_norm
+                    )
+
+                    kp_feats = self._compute_keypoint_features(inst["keypoints"], img_w, img_h, (x, y, w, h))
+
+                    # Read the frame directly from the prepared video by index.
+                    bgr_frame = frame_reader.read(int(inst["frame_id"]))
+                    if bgr_frame is None:
+                        logging.warning(f"Frame {inst['frame_id']} not found in {video_path}")
+                        continue
+
+                    try:
+                        img = Image.fromarray(cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB))
                         x1, y1, x2, y2 = self._pad_and_clip_bbox(x, y, w, h, img_w, img_h, padding_factor)
                         crop = img.crop((x1, y1, x2, y2))
                         tensor = self.transform(crop)
-                    
-                    batch_images.append(tensor)
-                    batch_bbox_feats.append(bbox_feats)
-                    batch_kp_feats.append(kp_feats)
-                    batch_frames.append(inst["frame_id"])
-                except Exception as e:
-                    logging.error(f"Failed to process object crop from {img_path}: {e}")
-                    continue
 
-                # Trigger inference when the target batch size is reached
-                if len(batch_images) >= self.batch_size:
+                        batch_images.append(tensor)
+                        batch_bbox_feats.append(bbox_feats)
+                        batch_kp_feats.append(kp_feats)
+                        batch_frames.append(inst["frame_id"])
+                    except Exception as e:
+                        logging.error(f"Failed to process object crop from frame {inst['frame_id']}: {e}")
+                        continue
+
+                    if len(batch_images) >= self.batch_size:
+                        _process_batch()
+
+                if batch_images:
                     _process_batch()
 
-            # Process remaining trailing frames for the track sequence
-            if batch_images:
-                _process_batch()
-
-            # Save arrays under distinct track references inside the file map
-            if feats_list:
-                npz_save_dict[f"track_{tid}_features"] = np.stack(feats_list, axis=0)
-                npz_save_dict[f"track_{tid}_frames"] = np.array(frames_list, dtype=np.int32)
+                if feats_list:
+                    npz_save_dict[f"track_{tid}_features"] = np.stack(feats_list, axis=0)
+                    npz_save_dict[f"track_{tid}_frames"] = np.array(frames_list, dtype=np.int32)
+        finally:
+            frame_reader.close()
 
         # 3. Secure output synchronization
         if npz_save_dict:

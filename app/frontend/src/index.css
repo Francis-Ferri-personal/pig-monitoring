@@ -50,7 +50,7 @@ h1 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 90px; /* Caja con tamaño fijo y estable */
+  height: 90px; /* Fixed-size stable box */
   box-sizing: border-box;
 }
 
@@ -91,7 +91,7 @@ h1 {
 .upload-filename {
   color: var(--accent);
   font-weight: 600;
-  font-size: 1rem; /* Texto más grande */
+  font-size: 1rem; /* Larger text */
 }
 
 /* Player Area */
@@ -194,4 +194,97 @@ video {
   background-color: var(--border);
   color: var(--text-secondary);
   cursor: not-allowed;
+}
+
+.view-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.view-btn:disabled:hover {
+  background-color: transparent;
+}
+
+.library-title {
+  margin-top: 1.5rem;
+}
+
+.video-library {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+.library-empty {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding: 0.5rem 0;
+}
+
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.6rem 0.7rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+  font-size: 0.8rem;
+}
+
+.library-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: var(--accent);
+}
+
+.library-item:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.library-item:disabled:hover {
+  background-color: transparent;
+  border-color: var(--border);
+}
+
+.library-processing {
+  border-style: dashed;
+}
+
+.library-id {
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.library-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-status {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.library-done {
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.upload-error {
+  margin-top: 0.75rem;
+  color: #ef4444;
+  font-size: 0.8rem;
+  line-height: 1.3;
 }

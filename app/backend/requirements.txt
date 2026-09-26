@@ -1,5 +1,6 @@
 opencv-python-headless<4.11
 fastapi
 uvicorn
+websockets
 python-multipart
 transformers
