@@ -16,7 +16,21 @@ SKELETON_CONNECTIONS: Sequence[Tuple[int, int]] = (
     (4, 11), (11, 12), (12, 13), (4, 14), (14, 15), (15, 16),
 )
 
-# High-contrast BGR colours, deterministic by tracking ID.
+# Fixed BGR colours per canonical pig ID (user-defined, HEX -> BGR for OpenCV).
+# 0: FFFF00 yellow -> (0,255,255)
+# 1: 00B050 green -> (80,176,0)
+# 2: FF0000 red -> (0,0,255)
+# 3: 009999 teal ("9999") -> (153,153,0)
+# 4: FFD966 light orange -> (102,217,255)
+PIG_COLORS: Mapping[int, Tuple[int, int, int]] = {
+    0: (0, 255, 255),
+    1: (80, 176, 0),
+    2: (0, 0, 255),
+    3: (153, 153, 0),
+    4: (102, 217, 255),
+}
+
+# Fallback cycle for non-canonical IDs (e.g. 99+ collision dummies).
 TRACK_COLORS: Sequence[Tuple[int, int, int]] = (
     (0, 255, 0), (0, 170, 255), (255, 80, 0), (255, 0, 255),
     (0, 255, 255), (180, 80, 255), (255, 255, 0), (80, 255, 120),
@@ -26,7 +40,10 @@ PREDICTION_COLOR = (255, 255, 255)
 
 def _track_color(track_id: Any) -> Tuple[int, int, int]:
     try:
-        return TRACK_COLORS[int(track_id) % len(TRACK_COLORS)]
+        tid = int(track_id)
+        if tid in PIG_COLORS:
+            return PIG_COLORS[tid]
+        return TRACK_COLORS[tid % len(TRACK_COLORS)]
     except (TypeError, ValueError):
         return TRACK_COLORS[0]
 
