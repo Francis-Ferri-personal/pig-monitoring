@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
+import cv2
 import numpy as np
 import torch
 import yaml
@@ -13,12 +14,16 @@ from torchvision import models, transforms
 #TODO: ADD keypoints features
 
 
-def load_cnn_device(model_name: str = "resnet18") -> Tuple[torch.nn.Module, torch.device, int]:
+def load_cnn_device(model_name: str = "resnet18", device_str: Optional[str] = None) -> Tuple[torch.nn.Module, torch.device, int]:
     """
     Load a pretrained CNN backbone and return it without the classification head.
     Returns (model, device, feature_dim).
+    device_str: e.g. "cuda", "cuda:1", "cpu". Default: cuda if available else cpu.
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device_str:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if model_name == "resnet18":
         backbone = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
@@ -195,10 +200,15 @@ def pad_and_clip_bbox(
 ALLOWED_TRACK_IDS = {0, 1, 2, 3, 4}
 
 
+# Fixed sampling: 5 fps clips, keep the 3rd frame of each second (~1 Hz,
+# compatible with the models trained at 1 fps).
+VIDEO_FPS = 5
+SAMPLE_INDEX = 2
+
+
 def extract_features(
     src_dir: str,
     dst_dir: str,
-    frames_root: str,
     action_to_id: Dict[str, int],
     cnn_name: str = "resnet18",
     image_size: int = 224,
@@ -210,17 +220,25 @@ def extract_features(
     target_video: Optional[str] = None,
     target_clip: Optional[str] = None,
     all_tracks: bool = False,
+    clips_root: str = "data/videos/clips",
+    device_str: Optional[str] = None,
 ) -> None:
     """
     Extract embeddings + bbox geometry + motion features from behavior-labeled COCO JSONs.
 
-    - Uses crops from data/images/frames (no masked images).
+    - Video-based (5 fps clips): reads crops directly from
+      <clips_root>/<video>/<clip>.mp4 via cv2 (no frame dumps on disk).
+    - Temporal sampling: keeps the 3rd frame of each second
+      (frame_id % 5 == 2) for ~1 Hz sequences.
+    - Geometry/motion (dx, dy, speed) are computed over the SAMPLED sequence,
+      so deltas are per-second, exactly like the old 1 fps pipeline.
     - For each track, stores:
         features: [T, D_visual + 11]  (D_visual from CNN, + 11 for bbox geom + enriched motion)
         labels:   [T]
-        frames:   [T]
+        frames:   [T]  (global sampled frame ids: clip_offset + frame_id)
     """
     print(f">>> Starting feature extraction from {src_dir}...")
+    print(f">>> Video source: {clips_root} | 5 fps, 3rd frame of each second (~1 Hz)")
     os.makedirs(dst_dir, exist_ok=True)
 
     # If only_keypoints is True, we don't need to load the CNN
@@ -228,11 +246,11 @@ def extract_features(
     device = None
     feat_dim = None
     if not only_keypoints:
-        backbone, device, feat_dim = load_cnn_device(cnn_name)
+        backbone, device, feat_dim = load_cnn_device(cnn_name, device_str)
+        print(f">>> CNN {cnn_name} on {device}")
         transform = get_image_transform(image_size=image_size)
 
     src_dir_path = Path(src_dir)
-    frames_root_path = Path(frames_root)
 
     total_videos = 0
     total_tracks = 0
@@ -288,6 +306,12 @@ def extract_features(
                 img_meta = images[ann["image_id"]]
                 img_w, img_h = img_meta["width"], img_meta["height"]
 
+                # 1 Hz sampling: keep the 3rd frame of each second
+                # (5 fps -> frame_id % 5 == 2).
+                raw_frame_id = int(img_meta.get("frame_id", img_meta.get("id", 0)))
+                if (raw_frame_id % VIDEO_FPS) != SAMPLE_INDEX:
+                    continue
+
                 x, y, w, h = ann["bbox"]
 
                 action_str = ann.get("action", list(action_to_id.keys())[0])
@@ -299,29 +323,57 @@ def extract_features(
                 frame_id = img_meta.get("frame_id", img_meta.get("id"))
                 global_frame_id = offset + int(frame_id)
 
-                file_name = img_meta.get("file_name")
-                if file_name is None:
-                    continue
-
                 if track_id not in tracks_data:
                     tracks_data[track_id] = []
 
                 tracks_data[track_id].append(
                     {
+                        "clip_id": clip_id,
                         "frame_id": frame_id,
                         "global_frame_id": global_frame_id,
                         "bbox": (x, y, w, h),
                         "keypoints": ann.get("keypoints", []),
                         "img_meta": img_meta,
                         "label": action_id,
-                        "file_name": file_name,
                         "img_size": (img_w, img_h),
                     }
                 )
 
         # Second pass: for each track, sort by global_frame_id, compute geometry+motion+CNN embedding
+        # NOTE: instances are already sampled at ~1 Hz, so motion deltas are
+        # per-second, matching the legacy 1 fps training data.
         video_dst = Path(dst_dir) / video_name
         video_dst.mkdir(parents=True, exist_ok=True)
+
+        # Lazily opened clip readers for this video (sequential-friendly).
+        clip_caps: Dict[str, cv2.VideoCapture] = {}
+        clip_pos: Dict[str, int] = {}
+
+        def read_clip_frame(clip_id: str, local_fid: int):
+            """Read frame `local_fid` from <clips_root>/<video>/<clip>.mp4 (BGR)."""
+            cap = clip_caps.get(clip_id)
+            if cap is None:
+                vpath = Path(clips_root) / video_name / f"{clip_id}.mp4"
+                if not vpath.exists():
+                    return None
+                cap = cv2.VideoCapture(str(vpath))
+                if not cap.isOpened():
+                    return None
+                clip_caps[clip_id] = cap
+                clip_pos[clip_id] = 0
+            cur = clip_pos.get(clip_id, 0)
+            if local_fid < cur:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, local_fid)
+                cur = local_fid
+            while cur < local_fid:
+                if not cap.grab():
+                    return None
+                cur += 1
+            ok, frame = cap.read()
+            if not ok:
+                return None
+            clip_pos[clip_id] = cur + 1
+            return frame
 
         track_ids = sorted(tracks_data.keys())
         print(f"    Found {len(track_ids)} valid tracks in {video_name}")
@@ -351,7 +403,6 @@ def extract_features(
                 frame_id = inst["global_frame_id"]  # use global for saving to NPZ
                 x, y, w, h = inst["bbox"]
                 img_w, img_h = inst["img_size"]
-                file_name = inst["file_name"]
 
                 bbox_feats, prev_cx_norm, prev_cy_norm = compute_bbox_features(
                     x,
@@ -375,25 +426,19 @@ def extract_features(
                         padding_factor=bbox_padding_factor,
                     )
 
-                    img_path = frames_root_path / video_name / file_name
-                    if not img_path.exists():
-                        img_path_alt = frames_root_path / file_name
-                        img_path_alt2 = frames_root_path / video_name / os.path.basename(file_name)
-                        if img_path_alt.exists():
-                            img_path = img_path_alt
-                        elif img_path_alt2.exists():
-                            img_path = img_path_alt2
-                        else:
-                            print(f"!!! Missing frame for track {tid}: tried {img_path}, {img_path_alt}, {img_path_alt2}")
-                            # For CNN features, we must skip the frame if image is missing.
-                            # For keypoints, we can still compute them.
-                            # But currently we process together in batches.
-                            # To keep it simple, if missing, we skip the frame.
-                            continue
-
-                    with Image.open(img_path).convert("RGB") as img:
-                        crop = img.crop((x1, y1, x2, y2))
-                        tensor = transform(crop)
+                    # Local frame id inside its clip (for cv2 seeking).
+                    local_fid = int(inst["img_meta"].get("frame_id", 0))
+                    frame_bgr = read_clip_frame(inst["clip_id"], local_fid)
+                    if frame_bgr is None:
+                        print(f"!!! Missing frame for track {tid}: "
+                              f"clip {video_name}/{inst['clip_id']} frame {local_fid}")
+                        continue
+                    crop_bgr = frame_bgr[y1:y2, x1:x2]
+                    if crop_bgr.size == 0:
+                        continue
+                    crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+                    crop = Image.fromarray(crop_rgb)
+                    tensor = transform(crop)
                     batch_images.append(tensor)
 
                 batch_bbox_feats.append(bbox_feats)
@@ -483,6 +528,9 @@ def extract_features(
             if idx % 5 == 0 or idx == len(track_ids):
                 print(f"    {video_name}: processed {idx}/{len(track_ids)} tracks")
 
+        for cap in clip_caps.values():
+            cap.release()
+
     print(f"\n>>> FINISHED. Features saved in: {dst_dir}")
 
 
@@ -491,7 +539,6 @@ if __name__ == "__main__":
     parser.add_argument("--src", type=str, default="data/annotations/behavior", help="Source directory with behavior JSONs")
     parser.add_argument("--predict", action="store_true", help="Use refined annotations as source for inference")
     parser.add_argument("--dst", type=str, help="Destination directory for .npz files")
-    parser.add_argument("--frames_root", type=str, help="Root directory for frames")
     parser.add_argument("--cnn_name", type=str, default="resnet18", help="CNN model name")
     parser.add_argument("--image_size", type=int, default=224, help="Image resize size")
     parser.add_argument("--bbox_padding", type=float, default=1.1, help="BBox padding factor")
@@ -502,6 +549,8 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, help="Process only a specific video")
     parser.add_argument("--clip", type=str, help="Process only a specific clip")
     parser.add_argument("--all_tracks", action="store_true", help="Process all track IDs, not just 0-4")
+    parser.add_argument("--clips_root", type=str, default="data/videos/clips", help="Root with <video>/<clip>.mp4 (default: data/videos/clips)")
+    parser.add_argument("--device", type=str, default=None, help="Torch device, e.g. cuda, cuda:1, cpu (default: cuda if available)")
 
     args = parser.parse_args()
 
@@ -513,7 +562,6 @@ if __name__ == "__main__":
         config = {}
 
     action_ids = config.get("behavior_classes", {"Lying": 0})
-    frames_root = args.frames_root or config.get("frames_folder", "data/images/frames")
     padding_factor = args.bbox_padding or config.get("bbox_padding_factor", 1.10)
     
     use_keypoints = args.use_keypoints or config.get("use_keypoints", False)
@@ -527,7 +575,6 @@ if __name__ == "__main__":
     extract_features(
         src_dir=src,
         dst_dir=dst,
-        frames_root=frames_root,
         action_to_id=action_ids,
         cnn_name=args.cnn_name,
         image_size=args.image_size,
@@ -539,5 +586,7 @@ if __name__ == "__main__":
         target_video=args.video,
         target_clip=args.clip,
         all_tracks=args.all_tracks,
+        clips_root=args.clips_root,
+        device_str=args.device,
     )
 
